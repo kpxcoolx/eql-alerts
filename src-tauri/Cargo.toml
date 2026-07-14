@@ -1,0 +1,34 @@
+[package]
+name = "eql-alerts"
+version = "0.1.0"
+description = "Lightweight log alerts for EverQuest Legends"
+authors = ["EQ Legends"]
+license = "MIT"
+edition = "2021"
+
+[lib]
+name = "eql_alerts_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+notify = "8.2.0"
+regex = "1.13.0"
+parking_lot = "0.12.5"
+tauri-plugin-dialog = "2.7.1"
+tauri-plugin-fs = "2.5.1"
+tauri-plugin-global-shortcut = "2.3.2"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "2", features = ["deflate"] }
+roxmltree = "0.20"
+md5 = "0.7"
+rodio = "0.20"
+cpal = "0.15"
+hound = "3.5"
+base64 = "0.22"

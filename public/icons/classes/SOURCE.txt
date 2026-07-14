@@ -1,0 +1,6 @@
+Official EverQuest client class icons (Daybreak Game Company).
+Downloaded from EQProgression Class_Icons mirror:
+  https://www.eqprogression.com/wp-content/uploads/Class_Icons/{class}-class-icon-eqprog.png
+  (shadowknight uses shadow-knight-class-icon-eqprog.png)
+Same assets appear on Magelo, Lucy/Allakhazam, and EQ Resource.
+All 16 classes included: WAR CLR PAL RNG SHD DRU MNK BRD ROG SHM NEC WIZ MAG ENC BST BER.

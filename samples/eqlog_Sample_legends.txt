@@ -1,0 +1,5 @@
+[Fri Jul 10 21:25:07 2026] LOADING, PLEASE WAIT...
+[Fri Jul 10 21:25:12 2026] You have entered Greater Faydark.
+[Fri Jul 10 21:26:01 2026] A wan ghoul knight begins to cast AE Fear.
+[Fri Jul 10 21:26:20 2026] Your fear has worn off.
+[Fri Jul 10 21:30:00 2026] You have been slain by a wan ghoul knight!

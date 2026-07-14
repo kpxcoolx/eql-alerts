@@ -1,0 +1,14 @@
+node_modules/
+dist/
+src-tauri/target/
+.DS_Store
+*.log
+.vscode/*
+!.vscode/extensions.json
+tts-kokoro/.venv/
+tts-kokoro/models/
+tts-kokoro/uv.lock
+# Local Windows GINA install (reference only — not source)
+GINA/
+__pycache__/
+*.pyc
