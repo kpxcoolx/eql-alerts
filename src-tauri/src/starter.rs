@@ -14,6 +14,7 @@ pub fn starter_pack() -> TriggerLibrary {
     strip_permanent_buff_timers(&mut pack);
 
     ensure_essentials(&mut pack);
+    let _ = ensure_eql_mez_timers(&mut pack);
     let _ = ensure_default_tts(&mut pack);
     pack
 }
@@ -690,6 +691,104 @@ pub fn ensure_eql_ability_timers(library: &mut TriggerLibrary) -> usize {
     changed
 }
 
+/// Align Enchanter mez durations / early-ends with EverQuest Legends wiki values.
+pub fn ensure_eql_mez_timers(library: &mut TriggerLibrary) -> usize {
+    let mut changed = 0usize;
+
+    // Find Crowd Control group (starter or gina_pack naming).
+    let cc_idx = library.groups.iter().position(|g| {
+        let n = g.name.to_ascii_lowercase();
+        n.contains("enchanter") && n.contains("crowd control")
+    });
+
+    for group in &mut library.groups {
+        for trigger in &mut group.triggers {
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            let name = trigger.name.as_str();
+
+            if name == "Glamour of Kintaz" || trigger.timer_name.as_deref() == Some("Kintaz - ${1}")
+            {
+                trigger.timer_seconds = Some(30);
+                ensure_early_end(
+                    trigger,
+                    r"^Your Glamour of Kintaz spell has worn off\.$",
+                );
+                if trigger.comments.is_none() {
+                    trigger.comments = Some("EQL: 30s (5 ticks), not classic 54s".into());
+                }
+            } else if name == "Rapture"
+                && trigger.timer_name.as_deref() == Some("Rapture - ${1}")
+            {
+                trigger.timer_seconds = Some(24);
+                ensure_early_end(trigger, r"^Your Rapture spell has worn off\.$");
+                if trigger.comments.is_none() {
+                    trigger.comments = Some("EQL: 24s (4 ticks), not classic 42s".into());
+                }
+            } else if name == "Dictate" && trigger.timer_name.as_deref() == Some("Dictate") {
+                trigger.timer_seconds = Some(48);
+                ensure_early_end(trigger, r"^Your Dictate spell has worn off\.$");
+            } else if name == "Entrance" {
+                ensure_early_end(trigger, r"^Your Entrance spell has worn off\.$");
+            } else if name == "Enthrall" {
+                ensure_early_end(trigger, r"^Your Enthrall spell has worn off\.$");
+            } else if name == "Fascination" {
+                ensure_early_end(trigger, r"^Your Fascination spell has worn off\.$");
+            } else if name.starts_with("Mesmerize") {
+                ensure_early_end(
+                    trigger,
+                    r"^Your (Mesmerize|Mesmerization) spell has worn off\.$",
+                );
+            } else if name == "Rapture Cooldown" {
+                trigger.timer_seconds = Some(24);
+            } else if name == "Dictate Cooldown" {
+                trigger.timer_seconds = Some(300);
+            }
+
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+    }
+
+    // Ensure silent Dazzle cast-track + worn-off clear exists in CC group.
+    if let Some(idx) = cc_idx {
+        let has_dazzle = library.groups[idx]
+            .triggers
+            .iter()
+            .any(|t| t.id == "eql-dazzle-mez" || t.name == "Dazzle");
+        if !has_dazzle {
+            library.groups[idx].triggers.push(Trigger {
+                id: "eql-dazzle-mez".into(),
+                name: "Dazzle".into(),
+                enabled: true,
+                search: r"^You begin casting Dazzle\.$".into(),
+                use_regex: true,
+                display_text: Some("".into()),
+                timer_seconds: None,
+                timer_name: Some("Dazzle - ${1}".into()),
+                early_end: vec![r"^Your Dazzle spell has worn off\.$".into()],
+                sound: Some("none".into()),
+                speak: None,
+                tts_enabled: false,
+                comments: Some(
+                    "EQL: 96s via Mesmerize land line after this cast. Clears Dazzle timers on worn-off."
+                        .into(),
+                ),
+            });
+            changed += 1;
+        }
+    }
+
+    changed
+}
+
+fn ensure_early_end(trigger: &mut Trigger, pattern: &str) {
+    if !trigger.early_end.iter().any(|e| e == pattern) {
+        trigger.early_end.insert(0, pattern.to_string());
+    }
+}
+
 /// Fill missing speak lines so every trigger can announce via TTS by default.
 pub fn ensure_default_tts(library: &mut TriggerLibrary) -> usize {
     let pack: TriggerLibrary =
@@ -817,6 +916,61 @@ mod tests {
             .expect("oom");
         assert!(oom.use_regex);
         assert!(oom.search.starts_with('^'));
+
+        let kintaz = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.name == "Glamour of Kintaz")
+            .expect("kintaz");
+        assert_eq!(kintaz.timer_seconds, Some(30));
+        assert!(kintaz
+            .early_end
+            .iter()
+            .any(|e| e.contains("Glamour of Kintaz")));
+        let rapture = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.name == "Rapture" && t.timer_name.as_deref() == Some("Rapture - ${1}"))
+            .expect("rapture mez");
+        assert_eq!(rapture.timer_seconds, Some(24));
+        let dazzle = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.id == "eql-dazzle-mez")
+            .expect("dazzle");
+        assert_eq!(dazzle.timer_name.as_deref(), Some("Dazzle - ${1}"));
+    }
+
+    #[test]
+    fn ensure_eql_mez_patches_classic_durations() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "cc".into(),
+                name: "Classes / Enchanter / Crowd Control".into(),
+                enabled: false,
+                triggers: vec![Trigger {
+                    id: "k".into(),
+                    name: "Glamour of Kintaz".into(),
+                    enabled: true,
+                    search: "x".into(),
+                    use_regex: true,
+                    display_text: None,
+                    timer_seconds: Some(54),
+                    timer_name: Some("Kintaz - ${1}".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        assert!(ensure_eql_mez_timers(&mut lib) >= 2);
+        assert_eq!(lib.groups[0].triggers[0].timer_seconds, Some(30));
+        assert!(lib.groups[0].triggers.iter().any(|t| t.id == "eql-dazzle-mez"));
     }
 
     #[test]

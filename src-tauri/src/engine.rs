@@ -137,6 +137,8 @@ pub struct TriggerEngine {
     next_alert_id: u64,
     /// Suppress duplicate alert spam for the same trigger (melee range spam, etc.).
     last_fire_ms: HashMap<String, u64>,
+    /// EQL: Dazzle shares the Mesmerize land line — remember a recent cast.
+    pending_dazzle_ms: Option<u64>,
 }
 
 /// Ignore a second fire of the same trigger within this window.
@@ -154,6 +156,7 @@ impl TriggerEngine {
             timers: vec![],
             next_alert_id: 1,
             last_fire_ms: HashMap::new(),
+            pending_dazzle_ms: None,
         };
         engine.set_library(library);
         engine
@@ -271,6 +274,11 @@ impl TriggerEngine {
             actions.push(synced);
         }
 
+        // EQL: Dazzle land text is identical to Mesmerize — remember recent casts.
+        if action == "You begin casting Dazzle." {
+            self.pending_dazzle_ms = Some(now);
+        }
+
         // Early-end pass: clear timers when end text matches.
         let mut cleared = Vec::new();
         for compiled in &self.compiled {
@@ -300,9 +308,12 @@ impl TriggerEngine {
                 .timer_name
                 .clone()
                 .unwrap_or_else(|| compiled.trigger.name.clone());
-            for timer in &self.timers {
-                if timer.name == timer_name {
-                    cleared.push(timer.id.clone());
+            // Don't expand early-end regex captures into timer names — alternation
+            // groups like (f|fs) would corrupt "Mesmerize - ${1}". Worn-off lines
+            // also omit the mob; clear by soonest matching prefix instead.
+            for id in timer_ids_to_clear(&self.timers, &timer_name, None) {
+                if !cleared.contains(&id) {
+                    cleared.push(id);
                 }
             }
         }
@@ -357,16 +368,20 @@ impl TriggerEngine {
             }
 
             // Debounce noisy combat spam (range / LOS while autoattacking).
-            let debounce_ms = if compiled.trigger.id.contains("out-of-range")
-                || compiled.trigger.id.contains("los")
-            {
-                5_000
-            } else {
-                ALERT_DEBOUNCE_MS
-            };
-            if let Some(prev) = self.last_fire_ms.get(&compiled.trigger.id) {
-                if now.saturating_sub(*prev) < debounce_ms {
-                    continue;
+            // Timer triggers skip debounce so multi-mob mez lands can all start clocks.
+            let is_timer = compiled.trigger.timer_seconds.unwrap_or(0) > 0;
+            if !is_timer {
+                let debounce_ms = if compiled.trigger.id.contains("out-of-range")
+                    || compiled.trigger.id.contains("los")
+                {
+                    5_000
+                } else {
+                    ALERT_DEBOUNCE_MS
+                };
+                if let Some(prev) = self.last_fire_ms.get(&compiled.trigger.id) {
+                    if now.saturating_sub(*prev) < debounce_ms {
+                        continue;
+                    }
                 }
             }
             self.last_fire_ms
@@ -418,11 +433,31 @@ impl TriggerEngine {
             let mut started_timer = None;
             if let Some(secs) = compiled.trigger.timer_seconds {
                 if secs > 0 {
-                    let timer_name = compiled
+                    let mut secs = secs;
+                    let mut name_template = compiled
                         .trigger
                         .timer_name
                         .clone()
                         .unwrap_or_else(|| compiled.trigger.name.clone());
+
+                    // Dazzle shares "has been mesmerized" with Mesmerize on EQL.
+                    let dazzle_pending = self
+                        .pending_dazzle_ms
+                        .map(|t| now.saturating_sub(t) < 5_000)
+                        .unwrap_or(false);
+                    let is_mesmerize_land = name_template.starts_with("Mesmerize");
+                    if dazzle_pending && is_mesmerize_land {
+                        secs = 96;
+                        name_template = "Dazzle - ${1}".to_string();
+                        self.pending_dazzle_ms = None;
+                    }
+
+                    let timer_name = expand_tokens(
+                        &name_template,
+                        &character,
+                        action,
+                        caps_owned.as_deref(),
+                    );
                     // Restart same-named timers (GINA-ish default).
                     self.timers.retain(|t| t.name != timer_name);
                     let timer = ActiveTimer {
@@ -437,6 +472,20 @@ impl TriggerEngine {
                     started_timer = Some(timer.clone());
                     self.timers.push(timer);
                 }
+            }
+
+            let speak_useful = speak
+                .as_ref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
+            let display_useful = !display.trim().is_empty();
+            let sound_useful = sound
+                .as_ref()
+                .map(|s| !s.eq_ignore_ascii_case("none"))
+                .unwrap_or(false);
+            // Silent match (e.g. Dazzle cast track / early-end-only helper).
+            if started_timer.is_none() && !speak_useful && !display_useful && !sound_useful {
+                continue;
             }
 
             let alert = FiredAlert {
@@ -459,8 +508,8 @@ impl TriggerEngine {
 
             actions.push(MatchAction {
                 alert: Some(alert),
-                sound,
-                speak,
+                sound: if sound_useful { sound } else { None },
+                speak: if speak_useful { speak } else { None },
                 started_timer,
                 cleared_timer_ids: vec![],
             });
@@ -594,6 +643,80 @@ fn expand_tokens(
     out
 }
 
+fn has_unexpanded_capture(name: &str) -> bool {
+    if name.contains("${") {
+        return true;
+    }
+    // GINA-style {1} left unexpanded.
+    let bytes = name.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'{' {
+            if let Some(end) = name[i + 1..].find('}') {
+                let inner = &name[i + 1..i + 1 + end];
+                if !inner.is_empty() && inner.chars().all(|c| c.is_ascii_digit()) {
+                    return true;
+                }
+                i += 1 + end + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
+/// Prefix used when early-end text has no mob capture (e.g. worn-off).
+fn timer_clear_prefix(template: &str) -> String {
+    let mut end = template.len();
+    if let Some(pos) = template.find("${") {
+        end = end.min(pos);
+    }
+    if let Some(pos) = template.find("$1") {
+        end = end.min(pos);
+    }
+    if let Some(pos) = template.find("{1}") {
+        end = end.min(pos);
+    }
+    template[..end]
+        .trim_end_matches([' ', '-', ':'])
+        .trim()
+        .to_string()
+}
+
+fn timer_matches_prefix(name: &str, prefix: &str) -> bool {
+    if prefix.is_empty() {
+        return false;
+    }
+    if name == prefix {
+        return true;
+    }
+    name.starts_with(&format!("{prefix} - "))
+}
+
+/// Exact name when captures expand the template; otherwise clear the soonest
+/// timer matching the template prefix (mez worn-off has no mob name).
+fn timer_ids_to_clear(
+    timers: &[ActiveTimer],
+    template: &str,
+    captures: Option<&[String]>,
+) -> Vec<String> {
+    let expanded = expand_tokens(template, "", "", captures);
+    if has_unexpanded_capture(&expanded) {
+        let prefix = timer_clear_prefix(template);
+        let soonest = timers
+            .iter()
+            .filter(|t| timer_matches_prefix(&t.name, &prefix))
+            .min_by_key(|t| t.ends_ms);
+        return soonest.map(|t| vec![t.id.clone()]).unwrap_or_default();
+    }
+    timers
+        .iter()
+        .filter(|t| t.name == expanded)
+        .map(|t| t.id.clone())
+        .collect()
+}
+
 fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -667,6 +790,126 @@ mod tests {
         engine.process_action("A mob begins to cast");
         assert_eq!(engine.snapshot().timers.len(), 1);
         engine.process_action("Your fear has worn off");
+        assert!(engine.snapshot().timers.is_empty());
+    }
+
+    #[test]
+    fn timer_name_expands_capture() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "G".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "mez".into(),
+                    name: "Mesmerize".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) has been mesmerized\.$".into(),
+                    use_regex: true,
+                    display_text: Some("".into()),
+                    timer_seconds: Some(24),
+                    timer_name: Some("Mesmerize - ${1}".into()),
+                    early_end: vec![r"^Your Mesmerize spell has worn off\.$".into()],
+                    sound: Some("none".into()),
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action("a goblin has been mesmerized.");
+        let timers = engine.snapshot().timers;
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].name, "Mesmerize - a goblin");
+        assert_eq!(timers[0].duration_secs, 24);
+    }
+
+    #[test]
+    fn mez_worn_off_clears_soonest_mob_timer() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "G".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "mez".into(),
+                    name: "Mesmerize".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) has been mesmerized\.$".into(),
+                    use_regex: true,
+                    display_text: Some("".into()),
+                    timer_seconds: Some(24),
+                    timer_name: Some("Mesmerize - ${1}".into()),
+                    early_end: vec![r"^Your Mesmerize spell has worn off\.$".into()],
+                    sound: Some("none".into()),
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action("a goblin has been mesmerized.");
+        engine.process_action("a beetle has been mesmerized.");
+        assert_eq!(engine.snapshot().timers.len(), 2);
+        // Goblin's timer started first → soonest to expire.
+        engine.process_action("Your Mesmerize spell has worn off.");
+        let left = engine.snapshot().timers;
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].name, "Mesmerize - a beetle");
+    }
+
+    #[test]
+    fn dazzle_cast_overrides_mesmerize_land_duration() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "G".into(),
+                enabled: true,
+                triggers: vec![
+                    Trigger {
+                        id: "mez".into(),
+                        name: "Mesmerize".into(),
+                        enabled: true,
+                        search: r"^([\w -'`]+) has been mesmerized\.$".into(),
+                        use_regex: true,
+                        display_text: Some("".into()),
+                        timer_seconds: Some(24),
+                        timer_name: Some("Mesmerize - ${1}".into()),
+                        early_end: vec![r"^Your Mesmerize spell has worn off\.$".into()],
+                        sound: Some("none".into()),
+                        speak: None,
+                        tts_enabled: false,
+                        comments: None,
+                    },
+                    Trigger {
+                        id: "dazzle".into(),
+                        name: "Dazzle".into(),
+                        enabled: true,
+                        search: r"^You begin casting Dazzle\.$".into(),
+                        use_regex: true,
+                        display_text: Some("".into()),
+                        timer_seconds: None,
+                        timer_name: Some("Dazzle - ${1}".into()),
+                        early_end: vec![r"^Your Dazzle spell has worn off\.$".into()],
+                        sound: Some("none".into()),
+                        speak: None,
+                        tts_enabled: false,
+                        comments: None,
+                    },
+                ],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action("You begin casting Dazzle.");
+        engine.process_action("a goblin has been mesmerized.");
+        let timers = engine.snapshot().timers;
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].name, "Dazzle - a goblin");
+        assert_eq!(timers[0].duration_secs, 96);
+
+        engine.process_action("Your Dazzle spell has worn off.");
         assert!(engine.snapshot().timers.is_empty());
     }
 

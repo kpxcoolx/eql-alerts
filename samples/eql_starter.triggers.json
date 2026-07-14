@@ -1854,6 +1854,7 @@
           "timer_seconds": 72,
           "timer_name": "Entrance - ${1}",
           "early_end": [
+            "^Your Entrance spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
           "sound": null,
@@ -1870,6 +1871,7 @@
           "timer_seconds": 36,
           "timer_name": "Fascination - ${1}",
           "early_end": [
+            "^Your Fascination spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
           "sound": null,
@@ -1883,14 +1885,15 @@
           "search": "^([\\w -'`]+) has been mesmerized by the Glamour of Kintaz\\.$",
           "use_regex": true,
           "display_text": null,
-          "timer_seconds": 54,
+          "timer_seconds": 30,
           "timer_name": "Kintaz - ${1}",
           "early_end": [
+            "^Your Glamour of Kintaz spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: 30s (5 ticks), not classic 54s"
         },
         {
           "id": "a0a8628d752e-3",
@@ -1902,11 +1905,12 @@
           "timer_seconds": 24,
           "timer_name": "Mesmerize - ${1}",
           "early_end": [
+            "^Your (Mesmerize|Mesmerization) spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: Dazzle shares this land line — a recent Dazzle cast upgrades the timer to 96s"
         },
         {
           "id": "a0a8628d752e-4",
@@ -1915,14 +1919,15 @@
           "search": "^([\\w -'`]+) swoons in raptured bliss\\.$",
           "use_regex": true,
           "display_text": null,
-          "timer_seconds": 42,
+          "timer_seconds": 24,
           "timer_name": "Rapture - ${1}",
           "early_end": [
+            "^Your Rapture spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: 24s (4 ticks), not classic 42s"
         },
         {
           "id": "a0a8628d752e-5",
@@ -1931,14 +1936,14 @@
           "search": "^You begin casting Dictate\\.$",
           "use_regex": true,
           "display_text": null,
-          "timer_seconds": 53,
+          "timer_seconds": 48,
           "timer_name": "Dictate",
           "early_end": [
             "^Your Dictate spell has worn off\\.$"
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: fixed 48s charm"
         },
         {
           "id": "a0a8628d752e-6",
@@ -1950,11 +1955,29 @@
           "timer_seconds": 48,
           "timer_name": "Enthrall - ${1}",
           "early_end": [
+            "^Your Enthrall spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
           "sound": null,
           "speak": null,
           "comments": null
+        },
+        {
+          "id": "eql-dazzle-mez",
+          "name": "Dazzle",
+          "enabled": true,
+          "search": "^You begin casting Dazzle\\.$",
+          "use_regex": true,
+          "display_text": "",
+          "timer_seconds": null,
+          "timer_name": "Dazzle - ${1}",
+          "early_end": [
+            "^Your Dazzle spell has worn off\\.$"
+          ],
+          "sound": "none",
+          "speak": null,
+          "tts_enabled": false,
+          "comments": "EQL: 96s via Mesmerize land line after this cast. Clears Dazzle timers on worn-off."
         },
         {
           "id": "a0a8628d752e-7",
@@ -2076,7 +2099,7 @@
           "search": "^(Beginning to memorize Dictate\\.\\.\\.|You begin casting Dictate\\.)$",
           "use_regex": true,
           "display_text": null,
-          "timer_seconds": 305,
+          "timer_seconds": 300,
           "timer_name": "Dictate Cooldown",
           "early_end": [
             "^You have been slain by (?:[^!]+)\\!$",
@@ -2084,7 +2107,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: 300s recast"
         },
         {
           "id": "f2cc864a91aa-4",
@@ -2093,7 +2116,7 @@
           "search": "^(Beginning to memorize Rapture\\.\\.\\.|You begin casting Rapture\\.)$",
           "use_regex": true,
           "display_text": null,
-          "timer_seconds": 26,
+          "timer_seconds": 24,
           "timer_name": "Rapture Cooldown",
           "early_end": [
             "^You have been slain by (?:[^!]+)\\!$",
@@ -2101,7 +2124,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: 24s recast"
         },
         {
           "id": "f2cc864a91aa-5",
