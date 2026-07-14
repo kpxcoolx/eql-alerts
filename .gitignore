@@ -12,3 +12,5 @@ tts-kokoro/uv.lock
 GINA/
 __pycache__/
 *.pyc
+# Updater signing private key — never commit
+.tauri-keys/

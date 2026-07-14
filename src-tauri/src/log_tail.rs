@@ -91,7 +91,7 @@ where
         }
 
         let mut pending = String::new();
-        let poll_every = Duration::from_millis(150);
+        let poll_every = Duration::from_millis(50);
 
         while !stop_flag.load(Ordering::SeqCst) {
             while let Ok(Ok(event)) = rx.try_recv() {

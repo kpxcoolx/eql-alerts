@@ -131,6 +131,42 @@ python3 scripts/rebuild_eql_starter.py
 
 Notes: Rust regex skips a few GINA patterns that use lookaround/backrefs. GINA **Text-to-voice** lines become `speak` and play through native OS TTS (macOS `say` / Windows SAPI) — Web Speech inside Tauri is unreliable. Optional wav/mp3 paths can go in `sound`. Permanent-buff timer stripping still runs after import.
 
+## Windows installer (Parallels VM)
+
+Same flow as EQL Meter — GitHub Actions builds the NSIS setup.exe and an auto-update feed.
+
+### Install in the VM
+
+1. Download the latest `*_x64-setup.exe` from [Releases](https://github.com/kpxcoolx/eql-alerts/releases/latest)
+2. Run it (current-user install; no admin)
+3. Find log → Overlay → Ctrl+Shift+L for click-through
+
+### Ship a new build
+
+1. Bump versions in `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml`
+2. Tag and push:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+Or: GitHub → Actions → **windows-build** → Run workflow with `v0.1.0`.
+
+CI creates a draft release with:
+
+- `EQL.Alerts_*_x64-setup.exe`
+- `.sig` + `latest.json` for in-app updates
+
+Then publishes only when those assets exist. In the app: **Updates** / banner **Install update**.
+
+### Secrets (repo Settings → Secrets)
+
+| Secret | Purpose |
+|--------|---------|
+| `TAURI_SIGNING_PRIVATE_KEY` | Contents of `.tauri-keys/eql-alerts.key` (local only; never commit) |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Optional if the key is passwordless |
+
 ## Stack
 
-Same lightweight approach as EQL Meter: **Tauri 2 + Rust log tail (notify + 150ms poll) + React UI**.
+Same lightweight approach as EQL Meter: **Tauri 2 + Rust log tail (notify + poll) + React UI**.

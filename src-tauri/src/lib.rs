@@ -763,6 +763,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(state.clone())
         .on_window_event(|window, event| match event {
             WindowEvent::Moved(_) | WindowEvent::Resized(_) => {
@@ -879,11 +881,14 @@ pub fn run() {
             #[cfg(debug_assertions)]
             tts::start_debug_server();
 
-            // Warm Kokoro neural TTS in the background (Mac + Windows).
-            std::thread::spawn(|| {
+            // Warm Kokoro neural TTS in the background (Mac + Windows), then
+            // pre-cache common combat callouts so interrupt/stun aren't cold.
+            let warm_voice = active_voice_id(&load_settings(app.handle()));
+            std::thread::spawn(move || {
                 if let Err(err) = kokoro::ensure_daemon() {
                     eprintln!("eql-alerts Kokoro: {err}");
                 }
+                tts::warm_essential_callouts(&warm_voice);
             });
 
             Ok(())

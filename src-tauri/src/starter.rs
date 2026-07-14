@@ -207,8 +207,8 @@ fn essentials_groups() -> Vec<TriggerGroup> {
                     "Spell interrupted",
                     "spell is interrupted",
                     Some("Interrupted"),
-                    Some("Spell interrupted"),
-                    Some("tink"),
+                    Some("Interrupted"),
+                    None,
                     Some("Matches classic and EQL “Your <Spell> spell is interrupted” lines"),
                 ),
                 t(
@@ -651,6 +651,16 @@ pub fn ensure_eql_ability_timers(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
         for trigger in &mut group.triggers {
+            if trigger.id == "eql-essentials-interrupted" {
+                let before = serde_json::to_string(trigger).unwrap_or_default();
+                trigger.speak = Some("Interrupted".to_string());
+                trigger.display_text = Some("Interrupted".to_string());
+                trigger.sound = None;
+                let after = serde_json::to_string(trigger).unwrap_or_default();
+                if before != after {
+                    changed += 1;
+                }
+            }
             let is_loh = trigger.id == "80a4144d8e7f-1"
                 || trigger.name == "Lay Hands Cooldown"
                 || trigger.timer_name.as_deref() == Some("Lay Hands Cooldown");

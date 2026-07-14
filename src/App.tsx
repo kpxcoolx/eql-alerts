@@ -14,6 +14,13 @@ import {
   type AudioOutputDevice,
 } from "./speech";
 import { formatCountdown } from "./time";
+import {
+  checkForAppUpdate,
+  installAppUpdate,
+  openLatestReleasePage,
+  type PendingUpdate,
+} from "./updates";
+import { getVersion } from "@tauri-apps/api/app";
 
 type AppSettings = {
   last_log_path: string | null;
@@ -412,6 +419,9 @@ export default function App() {
   const [alertSounds, setAlertSounds] = useState<AlertSoundInfo[]>([]);
   const [kokoroVoices, setKokoroVoices] = useState<KokoroVoice[]>([]);
   const [audioDevices, setAudioDevices] = useState<AudioOutputDevice[]>([]);
+  const [appVersion, setAppVersion] = useState("");
+  const [pendingUpdate, setPendingUpdate] = useState<PendingUpdate | null>(null);
+  const [updateBusy, setUpdateBusy] = useState(false);
   const voicePreviewTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -478,6 +488,56 @@ export default function App() {
       unlistenTts.then((fn) => fn());
     };
   }, []);
+
+  useEffect(() => {
+    getVersion()
+      .then(setAppVersion)
+      .catch(() => setAppVersion(""));
+    checkForAppUpdate()
+      .then((update) => {
+        if (update) setPendingUpdate(update);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  async function runUpdateCheck() {
+    setUpdateBusy(true);
+    setError(null);
+    try {
+      const update = await checkForAppUpdate();
+      if (!update) {
+        setPendingUpdate(null);
+        setNote(
+          appVersion
+            ? `You're on the latest version (${appVersion})`
+            : "You're on the latest version"
+        );
+        return;
+      }
+      setPendingUpdate(update);
+      setNote(`Update ${update.version} is available`);
+    } catch (err) {
+      setPendingUpdate(null);
+      setNote("Update check failed — use Latest release…");
+      setError(String(err).replace(/^Error:\s*/, ""));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
+
+  async function runInstallUpdate() {
+    setUpdateBusy(true);
+    setError(null);
+    setNote("Downloading update…");
+    try {
+      await installAppUpdate();
+    } catch (err) {
+      setNote("Update install failed — use Latest release…");
+      setError(String(err));
+    } finally {
+      setUpdateBusy(false);
+    }
+  }
 
   const selected = useMemo(() => {
     if (!selection) return null;
@@ -1253,9 +1313,65 @@ export default function App() {
             >
               Reset starter
             </button>
+            <button
+              className="btn ghost"
+              type="button"
+              disabled={updateBusy}
+              title="Check GitHub for a newer Windows installer"
+              onClick={() => void runUpdateCheck()}
+            >
+              {updateBusy ? "Checking…" : "Updates"}
+            </button>
+            {pendingUpdate ? (
+              <button
+                className="btn mint"
+                type="button"
+                disabled={updateBusy}
+                title={`Install ${pendingUpdate.version}`}
+                onClick={() => void runInstallUpdate()}
+              >
+                Install {pendingUpdate.version}
+              </button>
+            ) : null}
+            <button
+              className="btn ghost"
+              type="button"
+              title="Open the latest GitHub release page"
+              onClick={() => void openLatestReleasePage()}
+            >
+              Latest release…
+            </button>
           </div>
+          {appVersion ? (
+            <div className="header-version">v{appVersion}</div>
+          ) : null}
         </div>
       </header>
+
+      {pendingUpdate ? (
+        <div className="update-banner">
+          <span>
+            Update <strong>{pendingUpdate.version}</strong> is available
+            {appVersion ? ` (you have ${appVersion})` : ""}.
+          </span>
+          <button
+            type="button"
+            className="btn mint"
+            disabled={updateBusy}
+            onClick={() => void runInstallUpdate()}
+          >
+            {updateBusy ? "Updating…" : "Install update"}
+          </button>
+          <button
+            type="button"
+            className="btn"
+            disabled={updateBusy}
+            onClick={() => void openLatestReleasePage()}
+          >
+            Release notes
+          </button>
+        </div>
+      ) : null}
 
       <section className="class-shelf">
         <div className="class-shelf-top">
@@ -1534,7 +1650,7 @@ export default function App() {
                         type="button"
                         onClick={() => {
                           const line = draft.speak.trim() || "Alert test";
-                          void testSpeech(line, null)
+                          void testSpeech(line)
                             .then((msg) => {
                               setNote(msg);
                               setError(null);

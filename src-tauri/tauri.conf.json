@@ -1,6 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "EQL Alerts",
+  "mainBinaryName": "EQL Alerts",
   "version": "0.1.0",
   "identifier": "com.eqlegends.alerts",
   "build": {
@@ -29,9 +30,14 @@
   "bundle": {
     "active": true,
     "targets": ["nsis", "dmg", "app"],
+    "createUpdaterArtifacts": true,
     "resources": ["sounds/*", "binaries/eql-speak"],
     "shortDescription": "Log triggers and overlays for EverQuest Legends",
     "longDescription": "Tails your EverQuest Legends character log and fires lightweight text, timer, and sound alerts — a modern, no-frills GINA-style engine.",
+    "macOS": {
+      "bundleName": "EQL Alerts",
+      "infoPlist": "Info.plist"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser",
@@ -45,5 +51,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEM4QzU1RDRFOUExQjZCMzYKUldRMmF4dWFUbDNGeVBpSlJzaVdFRUlvbE0zQzZHU21sbG1VUnNqeHFOSDZWQ3kyd3pxVFUyN1cK",
+      "endpoints": [
+        "https://github.com/kpxcoolx/eql-alerts/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

@@ -13,6 +13,7 @@ use std::io::Write;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc;
 use std::sync::{Mutex, OnceLock};
 use std::thread;
@@ -24,6 +25,8 @@ use tauri::{AppHandle, Emitter};
 static SPEECH_LOCK: Mutex<()> = Mutex::new(());
 static LAST_SPEECH_PID: Mutex<Option<u32>> = Mutex::new(None);
 static AUDIO_STOP: Mutex<Option<mpsc::Sender<()>>> = Mutex::new(None);
+/// Bumped by stop_speech so in-flight Kokoro work is dropped before play.
+static SPEECH_GEN: AtomicU64 = AtomicU64::new(0);
 /// Preferred output device name (empty / None = system default).
 static PREFERRED_OUTPUT: Mutex<Option<String>> = Mutex::new(None);
 static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
@@ -32,6 +35,18 @@ static SPEAK_FILE_CACHE: OnceLock<Mutex<HashMap<String, PathBuf>>> = OnceLock::n
 
 fn speak_cache() -> &'static Mutex<HashMap<String, PathBuf>> {
     SPEAK_FILE_CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn phrase_cache_dir() -> PathBuf {
+    if let Ok(home) = std::env::var("HOME") {
+        let dir = PathBuf::from(home)
+            .join("Library/Caches/com.eqlegends.alerts/tts-phrases");
+        let _ = std::fs::create_dir_all(&dir);
+        return dir;
+    }
+    let dir = std::env::temp_dir().join("eql-alerts-tts").join("phrase-cache");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
 }
 
 pub fn set_app_handle(app: AppHandle) {
@@ -475,16 +490,27 @@ fn play_file_helper(path: &Path, wait: bool, volume: f64, track_pid: bool) -> Re
             if wait {
                 return run_helper_wait(&bin, &["--volume", &vol, &path_str], track_pid);
             }
-            let child = Command::new(&bin)
+            let mut child = Command::new(&bin)
                 .args(["--volume", &vol])
                 .arg(&path_str)
                 .stdout(Stdio::null())
                 .stderr(Stdio::piped())
                 .spawn()
                 .map_err(|e| format!("eql-speak play: {e}"))?;
+            let pid = child.id();
             if track_pid {
-                remember_pid(child.id());
+                remember_pid(pid);
             }
+            // Reap in the background so fire-and-forget playback does not leak zombies
+            // or hold SPEECH_LOCK for the whole clip (that delayed interrupt callouts).
+            thread::spawn(move || {
+                let _ = child.wait();
+                if let Ok(mut guard) = LAST_SPEECH_PID.lock() {
+                    if *guard == Some(pid) {
+                        *guard = None;
+                    }
+                }
+            });
             return Ok(());
         }
         return Err("eql-speak missing".into());
@@ -558,6 +584,7 @@ fn play_file_webview(path: &Path, wait: bool, volume: f64) -> Result<(), String>
     Ok(())
 }
 
+#[allow(dead_code)]
 fn play_file(path: &Path, wait: bool, volume: f64) -> Result<(), String> {
     play_file_tracked(path, wait, volume, true)
 }
@@ -596,6 +623,7 @@ fn play_file_tracked(path: &Path, wait: bool, volume: f64, track_pid: bool) -> R
 }
 
 pub fn stop_speech() {
+    SPEECH_GEN.fetch_add(1, Ordering::SeqCst);
     if let Ok(mut slot) = AUDIO_STOP.lock() {
         if let Some(tx) = slot.take() {
             let _ = tx.send(());
@@ -663,6 +691,8 @@ fn bundled_callout_wav(text: &str, gender: VoiceGender) -> Option<PathBuf> {
         "low health" => "low-health",
         "pet died" => "pet-died",
         "fizzle" => "fizzle",
+        "interrupted" | "spell interrupted" => "interrupted",
+        "stunned" => "stunned",
         "you died" => "you-died",
         "alert test" => "alert-test",
         _ => return None,
@@ -755,24 +785,52 @@ fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String>
         voice_id.trim()
     };
     let gender = voice_gender_from_id(voice_id);
+    let ticket = SPEECH_GEN.load(Ordering::SeqCst);
     tts_log(&format!(
         "speak_blocking start voice={voice_id} gender={} vol={volume:.2} text={text:?}",
         gender.as_str()
     ));
 
+    // Bundled combat callouts first — skip Kokoro entirely (interrupt/stun/oom…).
+    if let Some(wav) = bundled_callout_wav(text, gender) {
+        if SPEECH_GEN.load(Ordering::SeqCst) != ticket {
+            tts_log("speak cancelled before bundled play");
+            return Ok(());
+        }
+        tts_log(&format!("bundled callout {}", wav.display()));
+        // Prefer eql-speak so stop_speech can kill mid-clip when the next alert fires.
+        #[cfg(target_os = "macos")]
+        {
+            return play_file_helper(&wav, false, volume, true);
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            return play_file_tracked(&wav, false, volume, true);
+        }
+    }
+
     let cache_key = format!("{voice_id}\0{text}");
     if let Ok(guard) = speak_cache().lock() {
         if let Some(cached) = guard.get(&cache_key) {
             if cached.exists() {
+                if SPEECH_GEN.load(Ordering::SeqCst) != ticket {
+                    tts_log("speak cancelled before cache play");
+                    return Ok(());
+                }
                 tts_log(&format!("speak cache hit {}", cached.display()));
-                return play_file(cached, true, volume);
+                return play_file_tracked(cached, false, volume, true);
             }
         }
     }
 
     // Prefer Kokoro neural TTS (Mac + Windows).
-    match crate::kokoro::synthesize_to_wav(text, voice_id, 1.05) {
+    match crate::kokoro::synthesize_to_wav(text, voice_id, 1.15) {
         Ok(wav) => {
+            if SPEECH_GEN.load(Ordering::SeqCst) != ticket {
+                tts_log("speak cancelled after kokoro synth");
+                let _ = std::fs::remove_file(&wav);
+                return Ok(());
+            }
             tts_log(&format!("kokoro file {}", wav.display()));
             let play_path = match copy_callout_to_cache(&wav) {
                 Ok(p) => p,
@@ -781,11 +839,8 @@ fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String>
                     wav.clone()
                 }
             };
-            // Keep a durable copy for this phrase so the next fire is instant.
-            let durable = std::env::temp_dir()
-                .join("eql-alerts-tts")
-                .join("phrase-cache");
-            let _ = std::fs::create_dir_all(&durable);
+            // Durable phrase cache survives temp dir / app restarts.
+            let durable = phrase_cache_dir();
             let safe: String = format!("{:x}", {
                 use std::collections::hash_map::DefaultHasher;
                 use std::hash::{Hash, Hasher};
@@ -803,17 +858,29 @@ fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String>
                     guard.insert(cache_key, durable_path.clone());
                 }
             }
-            let play = play_file(&play_path, true, volume);
+            if SPEECH_GEN.load(Ordering::SeqCst) != ticket {
+                tts_log("speak cancelled before kokoro play");
+                if play_path != wav {
+                    let _ = std::fs::remove_file(&play_path);
+                }
+                let _ = std::fs::remove_file(&wav);
+                return Ok(());
+            }
+            let play = play_file_tracked(&play_path, false, volume, true);
             if play_path != wav {
                 let _ = std::fs::remove_file(&wav);
             }
-            // Keep durable_path; drop the one-shot callout copy if different.
             if play_path != durable_path {
                 let _ = std::fs::remove_file(&play_path);
             }
             return play;
         }
         Err(err) => tts_log(&format!("kokoro unavailable, fallback: {err}")),
+    }
+
+    if SPEECH_GEN.load(Ordering::SeqCst) != ticket {
+        tts_log("speak cancelled before system TTS");
+        return Ok(());
     }
 
     #[cfg(target_os = "macos")]
@@ -823,24 +890,25 @@ fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String>
         };
         let vol = format!("{volume:.3}");
 
-        if let Some(wav) = bundled_callout_wav(text, gender) {
-            let wav_path = wav.to_string_lossy().into_owned();
-            tts_log(&format!(
-                "playing bundled wav via NSSound helper ({}): {wav_path}",
-                gender.as_str()
-            ));
-            return run_helper_wait(&bin, &["--volume", &vol, &wav_path], true).map_err(|e| {
-                tts_log(&format!("bundled wav helper failed: {e}"));
-                e
-            });
-        }
-
         tts_log(&format!("live AVSpeech via helper {}", bin.display()));
-        return run_helper_wait(&bin, &["--volume", &vol, "--speak", text, gender.as_str()], true)
-            .map_err(|e| {
-                tts_log(&format!("AVSpeech helper failed: {e}"));
-                e
-            });
+        // Fire-and-forget so SPEECH_LOCK is not held for the whole utterance.
+        let mut child = Command::new(&bin)
+            .args(["--volume", &vol, "--speak", text, gender.as_str()])
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("spawn eql-speak: {e}"))?;
+        let pid = child.id();
+        remember_pid(pid);
+        thread::spawn(move || {
+            let _ = child.wait();
+            if let Ok(mut guard) = LAST_SPEECH_PID.lock() {
+                if *guard == Some(pid) {
+                    *guard = None;
+                }
+            }
+        });
+        return Ok(());
     }
 
     #[cfg(target_os = "windows")]
@@ -853,6 +921,65 @@ fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String>
         let _ = (text, voice_id, volume);
         Err("TTS is only wired for macOS and Windows".into())
     }
+}
+
+/// Pre-synth non-bundled essentials so the first fight hit is cache-hot.
+pub fn warm_essential_callouts(voice_id: &str) {
+    let voice_id = if voice_id.trim().is_empty() {
+        "bf_isabella".to_string()
+    } else {
+        voice_id.trim().to_string()
+    };
+    thread::spawn(move || {
+        let phrases = [
+            "Interrupted",
+            "Stunned",
+            "Out of mana",
+            "Fizzle",
+            "Pet died",
+            "Low health",
+            "You died",
+            "Enraged",
+            "Did not take hold",
+        ];
+        for phrase in phrases {
+            let gender = voice_gender_from_id(&voice_id);
+            if bundled_callout_wav(phrase, gender).is_some() {
+                continue;
+            }
+            let cache_key = format!("{voice_id}\0{phrase}");
+            if let Ok(guard) = speak_cache().lock() {
+                if guard.get(&cache_key).is_some_and(|p| p.exists()) {
+                    continue;
+                }
+            }
+            match crate::kokoro::synthesize_to_wav(phrase, &voice_id, 1.15) {
+                Ok(wav) => {
+                    let durable = phrase_cache_dir();
+                    let safe: String = format!("{:x}", {
+                        use std::collections::hash_map::DefaultHasher;
+                        use std::hash::{Hash, Hasher};
+                        let mut h = DefaultHasher::new();
+                        cache_key.hash(&mut h);
+                        h.finish()
+                    });
+                    let ext = wav
+                        .extension()
+                        .and_then(|e| e.to_str())
+                        .unwrap_or("aiff");
+                    let durable_path = durable.join(format!("{safe}.{ext}"));
+                    if std::fs::copy(&wav, &durable_path).is_ok() {
+                        if let Ok(mut guard) = speak_cache().lock() {
+                            guard.insert(cache_key, durable_path);
+                        }
+                        tts_log(&format!("warmed TTS cache for {phrase:?}"));
+                    }
+                    let _ = std::fs::remove_file(&wav);
+                }
+                Err(err) => tts_log(&format!("warm {phrase:?} failed: {err}")),
+            }
+        }
+    });
 }
 
 fn remember_pid(pid: u32) {
