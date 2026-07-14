@@ -1,0 +1,43 @@
+/**
+ * Overlay baseline design tokens.
+ * Derived from eqlalerts.com marketing shots (main-window.png, overlay-toasts.png)
+ * and site CSS — warm dark + amber metal, not the live mint overlay.
+ */
+
+:root {
+  /* Surfaces */
+  --ov-bg: #0e0c0a;
+  --ov-panel: rgba(22, 18, 14, 0.92);
+  --ov-panel-solid: #1c1814;
+  --ov-recess: #0a0908;
+
+  /* Metal chrome */
+  --ov-bronze: #5c4630;
+  --ov-bronze-hi: #8a6b42;
+  --ov-gold: #e0a84a;
+  --ov-gold-hot: #f0c56a;
+  --ov-line: rgba(224, 168, 74, 0.28);
+  --ov-line-strong: rgba(224, 168, 74, 0.55);
+
+  /* Text */
+  --ov-text: #f0e6d8;
+  --ov-text-muted: #9a8b74;
+  --ov-text-gold: #f0c56a;
+
+  /* Progress (molten amber, marketing timers) */
+  --ov-bar-track: rgba(0, 0, 0, 0.55);
+  --ov-bar-fill-a: #c45a1a;
+  --ov-bar-fill-b: #e0a84a;
+  --ov-bar-glow: rgba(224, 168, 74, 0.45);
+
+  /* Typography — match marketing / site */
+  --ov-font-display: "Cinzel", "Palatino Linotype", Palatino, serif;
+  --ov-font-body: "Source Sans 3", "Segoe UI", sans-serif;
+  --ov-font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* Layout */
+  --ov-radius: 10px;
+  --ov-gap: 7px;
+  --ov-icon: 40px;
+  --ov-bar-h: 8px;
+}

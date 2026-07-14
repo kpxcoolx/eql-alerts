@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import type { EngineState, FiredAlert } from "./App";
+import type { EngineState, FiredAlert, TriggerLibrary } from "./App";
+import { resolveTimerIcon, resolveToastIcon } from "./overlayIcons";
 import { formatCountdown } from "./time";
 
 type OverlayStatus = {
@@ -18,6 +19,9 @@ export default function Overlay() {
   const [toasts, setToasts] = useState<Toast[]>([]);
   const [now, setNow] = useState(Date.now());
   const [modeHint, setModeHint] = useState<string | null>(null);
+  const [groupByTrigger, setGroupByTrigger] = useState<Map<string, string>>(
+    () => new Map(),
+  );
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 200);
@@ -32,6 +36,18 @@ export default function Overlay() {
     invoke<OverlayStatus>("get_overlay_status")
       .then((status) => setClickThrough(status.click_through))
       .catch(() => setClickThrough(false));
+
+    invoke<TriggerLibrary>("get_triggers")
+      .then((lib) => {
+        const map = new Map<string, string>();
+        for (const group of lib.groups) {
+          for (const trigger of group.triggers) {
+            map.set(trigger.id, group.name);
+          }
+        }
+        setGroupByTrigger(map);
+      })
+      .catch(() => setGroupByTrigger(new Map()));
 
     const unlistenEngine = listen<EngineState>("alerts-update", (event) => {
       setEngine(event.payload);
@@ -82,6 +98,14 @@ export default function Overlay() {
     }
   }
 
+  async function closeOverlay() {
+    try {
+      await invoke("close_overlay");
+    } catch {
+      // ignore
+    }
+  }
+
   const setupMode = !clickThrough;
   const timers = engine?.timers ?? [];
   const hasContent = timers.length > 0 || toasts.length > 0 || modeHint;
@@ -99,24 +123,39 @@ export default function Overlay() {
             }}
           >
             <span className="drag-title">EQL Alerts</span>
-            <button
-              type="button"
-              title="Clicks pass through to the game. Use ⌘⇧U / Ctrl+Shift+U to edit again."
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                void enableClickThrough();
-              }}
-            >
-              Click-through
-            </button>
+            <div className="drag-actions">
+              <button
+                type="button"
+                title="Clicks pass through to the game. Use ⌘⇧U / Ctrl+Shift+U to edit again."
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void enableClickThrough();
+                }}
+              >
+                Click-through
+              </button>
+              <button
+                type="button"
+                className="close-btn"
+                title="Hide the overlay. Open it again from the main window."
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  void closeOverlay();
+                }}
+              >
+                Close
+              </button>
+            </div>
           </div>
           {!hasContent ? (
             <div className="empty-hint">
               Timers and alerts show here. Drag to move · Click-through to play
-              through the overlay · ⌘⇧U / Ctrl+Shift+U restores edit mode (×
-              dismisses a timer).
+              through the overlay · Close to hide it · ⌘⇧U / Ctrl+Shift+U
+              restores edit mode (× dismisses a timer).
             </div>
           ) : null}
         </div>
@@ -125,23 +164,28 @@ export default function Overlay() {
       {modeHint ? <div className="mode-hint">{modeHint}</div> : null}
 
       <div className="toasts">
-        {toasts.map((toast) => (
-          <div className="toast" key={toast.id}>
-            <span className="toast-text">{toast.text}</span>
-            {setupMode ? (
-              <button
-                type="button"
-                className="dismiss"
-                title="Dismiss"
-                onClick={() =>
-                  setToasts((prev) => prev.filter((t) => t.id !== toast.id))
-                }
-              >
-                ×
-              </button>
-            ) : null}
-          </div>
-        ))}
+        {toasts.map((toast) => {
+          const groupName = groupByTrigger.get(toast.trigger_id) ?? null;
+          const iconSrc = resolveToastIcon(toast.text, groupName);
+          return (
+            <div className="toast" key={toast.id}>
+              <img className="row-icon" src={iconSrc} alt="" />
+              <span className="toast-text">{toast.text}</span>
+              {setupMode ? (
+                <button
+                  type="button"
+                  className="dismiss"
+                  title="Dismiss"
+                  onClick={() =>
+                    setToasts((prev) => prev.filter((t) => t.id !== toast.id))
+                  }
+                >
+                  ×
+                </button>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
 
       <div className="timers">
@@ -154,31 +198,36 @@ export default function Overlay() {
               ((timer.ends_ms - now) / (timer.duration_secs * 1000)) * 100,
             ),
           );
+          const groupName = groupByTrigger.get(timer.trigger_id) ?? null;
+          const iconSrc = resolveTimerIcon(timer.name, groupName);
           return (
             <div className="timer" key={timer.id}>
-              <div className="timer-top">
-                <div className="name">{timer.name}</div>
-                {setupMode ? (
-                  <button
-                    type="button"
-                    className="dismiss"
-                    title="Clear this timer"
-                    onClick={() => {
-                      void invoke<EngineState>("clear_timer", {
-                        timerId: timer.id,
-                      })
-                        .then(setEngine)
-                        .catch(() => undefined);
-                    }}
-                  >
-                    ×
-                  </button>
-                ) : null}
+              <img className="row-icon" src={iconSrc} alt="" />
+              <div className="timer-body">
+                <div className="timer-top">
+                  <div className="name">{timer.name}</div>
+                  <div className="left">{formatCountdown(left)}</div>
+                  {setupMode ? (
+                    <button
+                      type="button"
+                      className="dismiss"
+                      title="Clear this timer"
+                      onClick={() => {
+                        void invoke<EngineState>("clear_timer", {
+                          timerId: timer.id,
+                        })
+                          .then(setEngine)
+                          .catch(() => undefined);
+                      }}
+                    >
+                      ×
+                    </button>
+                  ) : null}
+                </div>
+                <div className="bar">
+                  <span style={{ width: `${pct}%` }} />
+                </div>
               </div>
-              <div className="bar">
-                <span style={{ width: `${pct}%` }} />
-              </div>
-              <div className="left">{formatCountdown(left)}</div>
             </div>
           );
         })}

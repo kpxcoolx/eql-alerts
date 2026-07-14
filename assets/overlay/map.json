@@ -1,0 +1,45 @@
+{
+  "defaultToast": "icon-alert.png",
+  "defaultTimer": "icon-timer-aura.png",
+  "byDisplayText": {
+    "Zoning…": "icon-zoning.png",
+    "Zoning...": "icon-zoning.png",
+    "ENRAGED": "icon-enrage.png",
+    "Enraged": "icon-enrage.png",
+    "Enrage soon": "icon-enrage.png",
+    "Rage over": "icon-enrage.png",
+    "YOU DIED": "icon-death.png",
+    "STUNNED": "icon-stun.png",
+    "Invis fading": "icon-fades.png",
+    "Invis faded": "icon-fades.png",
+    "Falling": "icon-fades.png"
+  },
+  "byTimerName": {
+    "Death": "icon-death.png",
+    "Stunned": "icon-stun.png",
+    "Low Health": "icon-alert.png"
+  },
+  "byGroupHint": {
+    "Zoning": "icon-zoning.png",
+    "Enrage": "icon-enrage.png",
+    "Fades": "icon-fades.png"
+  },
+  "byClass": {
+    "Warrior": "classes/warrior.png",
+    "Cleric": "classes/cleric.png",
+    "Paladin": "classes/paladin.png",
+    "Ranger": "classes/ranger.png",
+    "Shadow Knight": "classes/shadowknight.png",
+    "Druid": "classes/druid.png",
+    "Monk": "classes/monk.png",
+    "Bard": "classes/bard.png",
+    "Rogue": "classes/rogue.png",
+    "Shaman": "classes/shaman.png",
+    "Necromancer": "classes/necromancer.png",
+    "Wizard": "classes/wizard.png",
+    "Magician": "classes/magician.png",
+    "Enchanter": "classes/enchanter.png",
+    "Beastlord": "classes/beastlord.png",
+    "Berserker": "classes/berserker.png"
+  }
+}

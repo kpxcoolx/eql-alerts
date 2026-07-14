@@ -1,4 +1,11 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import {
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -164,7 +171,54 @@ function sortClassPacks(packs: ClassPack[]): ClassPack[] {
 
 function classIconUrl(name: string): string {
   const slug = name.toLowerCase().replace(/\s+/g, "");
-  return `./icons/classes/${slug}.png`;
+  return `./icons/overlay/classes/${slug}.png`;
+}
+
+function essentialsIcon(label: string): string {
+  const map: Record<string, string> = {
+    Core: "icon-zoning.png",
+    Combat: "icon-enrage.png",
+    Danger: "icon-death.png",
+    Fades: "icon-fades.png",
+    Social: "icon-buff.png",
+  };
+  const file = map[label] ?? "icon-alert.png";
+  return `./icons/overlay/${file}`;
+}
+
+function classAccent(name: string): string {
+  const accents: Record<string, string> = {
+    Cleric: "#d4af37",
+    Wizard: "#4fd1c5",
+    Warrior: "#9b2c2c",
+    Paladin: "#d4af37",
+    "Shadow Knight": "#8b3a4a",
+    Ranger: "#6b9e5a",
+    Druid: "#6b9e5a",
+    Shaman: "#5a8fbf",
+    Enchanter: "#9b7ed8",
+    Magician: "#c45a8a",
+    Necromancer: "#7a6a9a",
+    Monk: "#c9a46a",
+    Rogue: "#a08060",
+    Bard: "#d4a04a",
+    Beastlord: "#6a9a7a",
+    Berserker: "#b84a3a",
+  };
+  return accents[name] ?? "#e0a84a";
+}
+
+function groupDescription(group: TriggerGroup): string {
+  const n = group.triggers.length;
+  const on = group.triggers.filter((t) => t.enabled).length;
+  const note = group.triggers.find((t) => t.comments)?.comments;
+  if (note) return note;
+  return `${on}/${n} triggers armed`;
+}
+
+function folderDescription(node: TreeNode): string {
+  const s = nodeStats(node);
+  return `${s.enabled}/${s.groups} sets · ${s.triggers} triggers`;
 }
 
 function formatTime(ms: number): string {
@@ -422,6 +476,11 @@ export default function App() {
   const [appVersion, setAppVersion] = useState("");
   const [pendingUpdate, setPendingUpdate] = useState<PendingUpdate | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [showAddClass, setShowAddClass] = useState(false);
+  const [inspecting, setInspecting] = useState(false);
+  const [activityOpen, setActivityOpen] = useState(true);
+  const [overlayOpen, setOverlayOpen] = useState(false);
   const voicePreviewTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -441,8 +500,14 @@ export default function App() {
     invoke<TriggerLibrary>("get_triggers")
       .then((lib) => {
         setLibrary(lib);
-        setExpanded({});
         const tree = buildTree(lib.groups);
+        const nextExpanded: Record<string, boolean> = {};
+        for (const node of tree) {
+          if (node.label === "EQL Essentials" || node.label === "Classes") {
+            nextExpanded[node.key] = true;
+          }
+        }
+        setExpanded(nextExpanded);
         const first = firstSelectable(tree);
         if (first?.group) {
           setSelection({
@@ -478,13 +543,21 @@ export default function App() {
       .then(setEngine)
       .catch(() => setEngine(null));
 
+    invoke<{ open: boolean }>("get_overlay_status")
+      .then((status) => setOverlayOpen(status.open))
+      .catch(() => setOverlayOpen(false));
+
     const unlisten = listen<EngineState>("alerts-update", (event) => {
       setEngine(event.payload);
+    });
+    const unlistenOverlay = listen<{ open: boolean }>("overlay-status", (event) => {
+      setOverlayOpen(event.payload.open);
     });
     const unlistenTts = bindTtsPlayback();
 
     return () => {
       unlisten.then((fn) => fn());
+      unlistenOverlay.then((fn) => fn());
       unlistenTts.then((fn) => fn());
     };
   }, []);
@@ -568,16 +641,6 @@ export default function App() {
     [library.groups]
   );
 
-  const stats = useMemo(() => {
-    const groupsOn = library.groups.filter((g) => g.enabled).length;
-    const triggers = library.groups.reduce((n, g) => n + g.triggers.length, 0);
-    const armed = library.groups.reduce((n, g) => {
-      if (!g.enabled) return n;
-      return n + g.triggers.filter((t) => t.enabled).length;
-    }, 0);
-    return { groups: library.groups.length, groupsOn, triggers, armed };
-  }, [library]);
-
   const tryResult = useMemo(() => {
     if (!selected || !tryLine.trim()) return null;
     const action = actionFromLogLine(tryLine);
@@ -617,6 +680,7 @@ export default function App() {
 
   function selectTrigger(groupId: string, triggerId: string) {
     setSelection({ groupId, triggerId });
+    setInspecting(true);
   }
 
   async function dismissQuickStart() {
@@ -854,6 +918,7 @@ export default function App() {
         .filter((g) => g.triggers.length > 0),
     });
     setSelection(null);
+    setInspecting(false);
   }
 
   function addSibling() {
@@ -866,6 +931,7 @@ export default function App() {
       }),
     });
     setSelection({ groupId: selected.group.id, triggerId: trigger.id });
+    setInspecting(true);
   }
 
   function addGroup() {
@@ -877,136 +943,293 @@ export default function App() {
     };
     void persist({ groups: [...library.groups, group] });
     setSelection({ groupId: group.id, triggerId: group.triggers[0].id });
+    setInspecting(true);
   }
 
-  function renderNode(node: TreeNode, depth: number): ReactNode {
-    const isOpen = expanded[node.key] === true;
-    const statsNode = nodeStats(node);
+  function toggleExpand(key: string) {
+    setExpanded((e) => ({ ...e, [key]: !e[key] }));
+  }
 
+  function setTriggerEnabled(groupId: string, triggerId: string, enabled: boolean) {
+    void persist({
+      groups: library.groups.map((g) => {
+        if (g.id !== groupId) return g;
+        return {
+          ...g,
+          triggers: g.triggers.map((t) =>
+            t.id === triggerId ? { ...t, enabled } : t
+          ),
+        };
+      }),
+    });
+  }
+
+  function rowIcon(node: TreeNode): string {
     if (node.group) {
-      const group = node.group;
-      const shown = triggersMatchingQuery(group, query.trim());
+      const parts = node.group.name.split(" / ").map((p) => p.trim());
+      if (parts[0] === "EQL Essentials" && parts[1]) {
+        return essentialsIcon(parts[1]);
+      }
+      for (const name of CLASS_NAMES) {
+        if (parts.includes(name) || node.label === name) {
+          return classIconUrl(name);
+        }
+      }
+      return "./icons/overlay/icon-alert.png";
+    }
+    if (CLASS_NAMES.has(node.label)) return classIconUrl(node.label);
+    if (node.label === "EQL Essentials" || node.key.includes("EQL Essentials")) {
+      return "./icons/overlay/icon-alert.png";
+    }
+    return "./icons/overlay/icon-alert.png";
+  }
+
+  function rowAccent(node: TreeNode): string | undefined {
+    if (CLASS_NAMES.has(node.label)) return classAccent(node.label);
+    if (node.group) {
+      const parts = node.group.name.split(" / ").map((p) => p.trim());
+      for (const name of CLASS_NAMES) {
+        if (parts.includes(name)) return classAccent(name);
+      }
+    }
+    return undefined;
+  }
+
+  function renderTriggerLeaves(group: TriggerGroup): ReactNode {
+    const shown = triggersMatchingQuery(group, query.trim());
+    if (shown.length === 0) {
+      return <div className="quiet">No triggers match.</div>;
+    }
+    return shown.map((trigger) => {
+      const active =
+        selection?.groupId === group.id && selection?.triggerId === trigger.id;
       return (
-        <div className="leaf" key={node.key}>
+        <div
+          key={trigger.id}
+          className={`trigger-leaf ${active ? "active" : ""}`}
+          onClick={() => selectTrigger(group.id, trigger.id)}
+        >
+          <button
+            type="button"
+            className={`switch ${trigger.enabled ? "on" : ""}`}
+            style={
+              trigger.enabled
+                ? ({ "--switch-accent": "var(--amber)" } as CSSProperties)
+                : undefined
+            }
+            aria-label={trigger.enabled ? "Disable trigger" : "Enable trigger"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setTriggerEnabled(group.id, trigger.id, !trigger.enabled);
+            }}
+          />
+          <div className="body">
+            <div className="title">{trigger.name}</div>
+            <div className="tags">
+              {trigger.timer_seconds ? (
+                <span className="tag timer">
+                  {formatCountdown(trigger.timer_seconds)}
+                </span>
+              ) : null}
+              {trigger.tts_enabled !== false ? (
+                <span className="tag">TTS</span>
+              ) : (
+                <span className="tag">SFX</span>
+              )}
+            </div>
+            <span className="pattern">
+              {trigger.search || "(empty pattern)"}
+            </span>
+          </div>
+        </div>
+      );
+    });
+  }
+
+  function renderGroupRow(node: TreeNode): ReactNode {
+    if (!node.group) return null;
+    const group = node.group;
+    const isOpen = expanded[node.key] === true;
+    const accent = rowAccent(node);
+    return (
+      <div key={node.key}>
+        <div
+          className={`trigger-row ${selection?.groupId === group.id ? "active" : ""}`}
+          style={
+            accent
+              ? ({ "--row-accent": accent } as CSSProperties)
+              : undefined
+          }
+        >
+          <img
+            className="trigger-row-icon"
+            src={rowIcon(node)}
+            alt=""
+            onError={(e) => {
+              (e.target as HTMLImageElement).src =
+                "./icons/overlay/icon-alert.png";
+            }}
+          />
           <div
-            className={`row ${selection?.groupId === group.id ? "active" : ""}`}
-            style={{ paddingLeft: 6 + depth * 6 }}
+            className="trigger-row-copy"
+            role="button"
+            tabIndex={0}
             onClick={() => {
-              setExpanded((e) => ({ ...e, [node.key]: !isOpen }));
+              toggleExpand(node.key);
               if (selection?.groupId !== group.id) {
                 const first = group.triggers[0];
-                if (first) selectTrigger(group.id, first.id);
+                if (first) {
+                  setSelection({ groupId: group.id, triggerId: first.id });
+                  setInspecting(false);
+                }
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                toggleExpand(node.key);
               }
             }}
           >
-            <span className="chev">{isOpen ? "▾" : "▸"}</span>
-            <input
-              type="checkbox"
-              checked={group.enabled}
-              onClick={(e) => e.stopPropagation()}
-              onChange={(e) => setGroupsEnabled([group.id], e.target.checked)}
-            />
-            <span className="name">{node.label}</span>
-            {group.enabled ? <span className="badge">armed</span> : null}
-            <span className="meta">{group.triggers.length}</span>
+            <div className="title">{node.label}</div>
+            <div className="desc">{groupDescription(group)}</div>
           </div>
-          {isOpen
-            ? shown.map((trigger) => {
-                const active =
-                  selection?.groupId === group.id &&
-                  selection?.triggerId === trigger.id;
-                return (
-                  <div
-                    key={trigger.id}
-                    className={`trigger ${active ? "active" : ""}`}
-                    onClick={() => selectTrigger(group.id, trigger.id)}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={trigger.enabled}
-                      onClick={(e) => e.stopPropagation()}
-                      onChange={(e) => {
-                        void persist({
-                          groups: library.groups.map((g) => {
-                            if (g.id !== group.id) return g;
-                            return {
-                              ...g,
-                              triggers: g.triggers.map((t) =>
-                                t.id === trigger.id
-                                  ? { ...t, enabled: e.target.checked }
-                                  : t
-                              ),
-                            };
-                          }),
-                        });
-                      }}
-                    />
-                    <div className="body">
-                      <div className="title">{trigger.name}</div>
-                      <div className="tags">
-                        {trigger.timer_seconds ? (
-                          <span className="tag timer">
-                            {formatCountdown(trigger.timer_seconds)}
-                          </span>
-                        ) : null}
-                        {trigger.tts_enabled !== false ? (
-                          <span className="tag">TTS</span>
-                        ) : (
-                          <span className="tag">SFX</span>
-                        )}
-                        {trigger.use_regex ? (
-                          <span className="tag regex">regex</span>
-                        ) : null}
-                        {trigger.display_text ? (
-                          <span className="tag">toast</span>
-                        ) : null}
-                      </div>
-                      <span className="pattern">
-                        {trigger.search || "(empty pattern)"}
-                      </span>
-                    </div>
-                  </div>
-                );
-              })
-            : null}
-        </div>
-      );
-    }
-
-    return (
-      <div className="folder" key={node.key}>
-        <div
-          className="row"
-          style={{ paddingLeft: 6 + depth * 6 }}
-          onClick={() => setExpanded((e) => ({ ...e, [node.key]: !isOpen }))}
-        >
-          <span className="chev">{isOpen ? "▾" : "▸"}</span>
-          <input
-            type="checkbox"
-            checked={statsNode.enabled === statsNode.groups && statsNode.groups > 0}
-            ref={(el) => {
-              if (!el) return;
-              el.indeterminate =
-                statsNode.enabled > 0 && statsNode.enabled < statsNode.groups;
+          <button
+            type="button"
+            className={`switch ${group.enabled ? "on" : ""}`}
+            style={
+              accent
+                ? ({ "--switch-accent": accent } as CSSProperties)
+                : undefined
+            }
+            aria-label={group.enabled ? "Disarm set" : "Arm set"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setGroupsEnabled([group.id], !group.enabled);
             }}
-            onClick={(e) => e.stopPropagation()}
-            onChange={(e) => setGroupsEnabled(collectGroupIds(node), e.target.checked)}
           />
-          <span className="name">{node.label}</span>
-          <span className="meta">
-            {statsNode.enabled}/{statsNode.groups}
-          </span>
+          <button
+            type="button"
+            className="trigger-row-nav"
+            title={isOpen ? "Collapse" : "Open triggers"}
+            onClick={() => {
+              if (!isOpen) toggleExpand(node.key);
+              const first = group.triggers[0];
+              if (first) selectTrigger(group.id, first.id);
+            }}
+          >
+            ›
+          </button>
         </div>
         {isOpen ? (
-          <div className="kids">
-            {node.children.map((child) => renderNode(child, depth + 1))}
+          <div className="trigger-kids">{renderTriggerLeaves(group)}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  function renderFolderRows(node: TreeNode): ReactNode {
+    if (node.group) return renderGroupRow(node);
+    const isOpen = expanded[node.key] === true;
+    const statsNode = nodeStats(node);
+    const allOn = statsNode.enabled === statsNode.groups && statsNode.groups > 0;
+    const accent = rowAccent(node);
+    return (
+      <div key={node.key}>
+        <div
+          className="trigger-row"
+          style={
+            accent
+              ? ({ "--row-accent": accent } as CSSProperties)
+              : undefined
+          }
+        >
+          <img
+            className="trigger-row-icon"
+            src={rowIcon(node)}
+            alt=""
+            onError={(e) => {
+              (e.target as HTMLImageElement).style.visibility = "hidden";
+            }}
+          />
+          <div
+            className="trigger-row-copy"
+            role="button"
+            tabIndex={0}
+            onClick={() => toggleExpand(node.key)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                toggleExpand(node.key);
+              }
+            }}
+          >
+            <div className="title">{node.label}</div>
+            <div className="desc">{folderDescription(node)}</div>
+          </div>
+          <button
+            type="button"
+            className={`switch ${allOn ? "on" : ""}`}
+            style={
+              accent
+                ? ({ "--switch-accent": accent } as CSSProperties)
+                : undefined
+            }
+            aria-label={allOn ? "Disarm folder" : "Arm folder"}
+            onClick={(e) => {
+              e.stopPropagation();
+              setGroupsEnabled(collectGroupIds(node), !allOn);
+            }}
+          />
+          <button
+            type="button"
+            className="trigger-row-nav"
+            title={isOpen ? "Collapse" : "Expand"}
+            onClick={() => toggleExpand(node.key)}
+          >
+            {isOpen ? "▾" : "›"}
+          </button>
+        </div>
+        {isOpen ? (
+          <div className="trigger-kids">
+            {node.children.map((child) => renderFolderRows(child))}
           </div>
         ) : null}
       </div>
     );
   }
 
+  function renderRootSection(node: TreeNode): ReactNode {
+    const isOpen = expanded[node.key] !== false;
+    return (
+      <section className="trigger-group" key={node.key}>
+        <button
+          type="button"
+          className="trigger-group-head"
+          onClick={() =>
+            setExpanded((e) => ({
+              ...e,
+              [node.key]: e[node.key] === false ? true : false,
+            }))
+          }
+        >
+          <span>{node.label}</span>
+          <span className="grow" />
+          <span className="chev">{isOpen ? "▴" : "▾"}</span>
+        </button>
+        {isOpen ? (
+          <div className="trigger-group-body">
+            {node.group
+              ? renderGroupRow(node)
+              : node.children.map((child) => renderFolderRows(child))}
+          </div>
+        ) : null}
+      </section>
+    );
+  }
+
   const live = !!engine?.monitoring;
+  const armedPacks = classPacks.filter((p) => p.enabledCount > 0);
 
   return (
     <div className="app">
@@ -1021,331 +1244,27 @@ export default function App() {
         />
       ) : null}
 
-      <header className="header">
-        <div className="logo">
-          <strong>EQL Alerts</strong>
-          <em>EverQuest Legends</em>
-        </div>
-
-        <div className={`conn ${live ? "live" : ""}`} title={engine?.log_path ?? ""}>
-          <span className="pulse" />
-          <div className="conn-copy">
-            <div className="title">
-              {live ? "Live" : "Not attached"} · {engine?.character ?? "—"}
-            </div>
-            <div className="sub">{shortPath(engine?.log_path ?? null)}</div>
-          </div>
-        </div>
-
-        <div className="audio-panel" title="Callout voice settings">
-          <div className="audio-row">
-            <label className="audio-field audio-field-voice">
-              <span className="audio-label">Voice</span>
-              <div className="audio-inline">
-                <select
-                  className="voice-select"
-                  value={settings?.voice_id || settings?.voice_female || "bf_isabella"}
-                  onChange={(e) => {
-                    const voice_id = e.target.value;
-                    const male =
-                      voice_id.startsWith("am_") || voice_id.startsWith("bm_");
-                    void patchSettings({
-                      voice_id,
-                      voice_gender: male ? "male" : "female",
-                      voice_female: male
-                        ? settings?.voice_female ?? "bf_isabella"
-                        : voice_id,
-                      voice_male: male
-                        ? voice_id
-                        : settings?.voice_male ?? "am_michael",
-                    });
-                    if (voicePreviewTimer.current != null) {
-                      window.clearTimeout(voicePreviewTimer.current);
-                    }
-                    voicePreviewTimer.current = window.setTimeout(() => {
-                      void previewVoice(
-                        voice_id,
-                        "Out of mana",
-                        settings?.voice_volume ?? 0.2,
-                      )
-                        .then((msg) => {
-                          setNote(msg);
-                          setError(null);
-                        })
-                        .catch((err) => {
-                          setError(`Voice preview failed: ${String(err)}`);
-                        });
-                    }, 450);
-                  }}
-                >
-                  <optgroup label="Female">
-                    {(kokoroVoices.length
-                      ? kokoroVoices
-                      : [
-                          {
-                            id: "bf_isabella",
-                            label: "Isabella (UK)",
-                            gender: "female",
-                            locale: "en-GB",
-                          },
-                          {
-                            id: "af_bella",
-                            label: "Bella",
-                            gender: "female",
-                            locale: "en-US",
-                          },
-                        ]
-                    )
-                      .filter((v) => v.gender === "female")
-                      .map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                          {v.locale !== "en-US" ? ` (${v.locale})` : ""}
-                        </option>
-                      ))}
-                  </optgroup>
-                  <optgroup label="Male">
-                    {(kokoroVoices.length
-                      ? kokoroVoices
-                      : [
-                          {
-                            id: "am_michael",
-                            label: "Michael",
-                            gender: "male",
-                            locale: "en-US",
-                          },
-                          {
-                            id: "am_fenrir",
-                            label: "Fenrir",
-                            gender: "male",
-                            locale: "en-US",
-                          },
-                        ]
-                    )
-                      .filter((v) => v.gender === "male")
-                      .map((v) => (
-                        <option key={v.id} value={v.id}>
-                          {v.label}
-                          {v.locale !== "en-US" ? ` (${v.locale})` : ""}
-                        </option>
-                      ))}
-                  </optgroup>
-                </select>
-                <button
-                  className="btn sm audio-preview-btn"
-                  type="button"
-                  title="Play a sample at the current volume"
-                  onClick={() => {
-                    const voice_id =
-                      settings?.voice_id || settings?.voice_female || "bf_isabella";
-                    void previewVoice(
-                      voice_id,
-                      "Out of mana",
-                      settings?.voice_volume ?? 0.2,
-                    )
-                      .then((msg) => {
-                        setNote(msg);
-                        setError(null);
-                      })
-                      .catch((err) => {
-                        setError(`Voice preview failed: ${String(err)}`);
-                        setNote(null);
-                      });
-                  }}
-                >
-                  Preview
-                </button>
-              </div>
-            </label>
-          </div>
-
-          <div className="audio-row audio-row-secondary">
-            <label className="audio-field audio-field-vol">
-              <span className="audio-label">Volume</span>
-              <div className="audio-vol-line">
-                <input
-                  type="range"
-                  min={0}
-                  max={100}
-                  value={Math.round((settings?.voice_volume ?? 0.2) * 100)}
-                  onChange={(e) => {
-                    const voice_volume = Number(e.target.value) / 100;
-                    void patchSettings({ voice_volume });
-                  }}
-                  onPointerUp={(e) => {
-                    const voice_volume = Number(e.currentTarget.value) / 100;
-                    const voice_id =
-                      settings?.voice_id || settings?.voice_female || "bf_isabella";
-                    void previewVoice(voice_id, "Out of mana", voice_volume).catch(
-                      () => undefined,
-                    );
-                  }}
-                />
-                <em className="voice-vol-pct">
-                  {Math.round((settings?.voice_volume ?? 0.2) * 100)}%
-                </em>
-              </div>
-            </label>
-
-            <label className="audio-field audio-field-out">
-              <span className="audio-label">Output</span>
-              <select
-                className="output-select"
-                value={settings?.audio_output_device ?? ""}
-                onChange={(e) => {
-                  const audio_output_device = e.target.value;
-                  const voice_id =
-                    settings?.voice_id || settings?.voice_female || "bf_isabella";
-                  void patchSettings({ audio_output_device }).then(() =>
-                    previewVoice(
-                      voice_id,
-                      "Out of mana",
-                      settings?.voice_volume ?? 0.2,
-                    )
-                      .then((msg) => {
-                        setNote(msg);
-                        setError(null);
-                      })
-                      .catch((err) => {
-                        setError(`Output preview failed: ${String(err)}`);
-                      }),
-                  );
-                }}
-                title={settings?.audio_output_device || "System default output"}
-              >
-                <option value="">System default</option>
-                {audioDevices.map((d) => {
-                  let label = d.name;
-                  if (d.is_default) {
-                    label = `${label} · default`;
-                  }
-                  if (d.channels > 2) {
-                    label = `${label} · ${d.channels}ch`;
-                  }
-                  return (
-                    <option key={d.name} value={d.name}>
-                      {label}
-                    </option>
-                  );
-                })}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div className="header-actions">
-          <div className="header-action-row">
-            <button
-              className="btn primary"
-              type="button"
-              title="Auto-find the newest EverQuest Legends character log and start monitoring"
-              onClick={() => void attachLog(false)}
-            >
-              Find log
-            </button>
-            <button
-              className="btn"
-              type="button"
-              title="Pick a log file manually (eqlog_*.txt)"
-              onClick={() => void attachLog(true)}
-            >
-              Browse…
-            </button>
-            {live ? (
-              <button
-                className="btn ghost"
-                type="button"
-                title="Stop watching the attached log"
-                onClick={() => void stop()}
-              >
-                Disconnect
-              </button>
-            ) : (
-              <button
-                className="btn"
-                type="button"
-                disabled={!(engine?.log_path || settings?.last_log_path)}
-                title="Resume monitoring the last attached log"
-                onClick={() => void reconnect()}
-              >
-                Reconnect
-              </button>
-            )}
-          </div>
-          <div className="header-action-row">
-            <button
-              className="btn mint"
-              type="button"
-              title="Open the always-on-top timer and toast overlay"
-              onClick={() => void invoke("open_overlay")}
-            >
-              Overlay
-            </button>
-            <button
-              className="btn ghost"
-              type="button"
-              title="Clear active countdown timers from the overlay"
-              onClick={() => void clearTimers()}
-            >
-              Clear timers
-            </button>
-            <button
-              className="btn ghost"
-              type="button"
-              title="Show the quick-start guide"
-              onClick={() => setShowQuickStart(true)}
-            >
-              Help
-            </button>
-            <button
-              className="btn"
-              type="button"
-              title="Import a GINA .gtp trigger package"
-              onClick={() => void importGinaPack()}
-            >
-              Import…
-            </button>
-            <button
-              className="btn ghost"
-              type="button"
-              title="Replace the library with Essentials + classes + classic EQL Raids"
-              onClick={() => void restoreStarter()}
-            >
-              Reset starter
-            </button>
-            <button
-              className="btn ghost"
-              type="button"
-              disabled={updateBusy}
-              title="Check GitHub for a newer Windows installer"
-              onClick={() => void runUpdateCheck()}
-            >
-              {updateBusy ? "Checking…" : "Updates"}
-            </button>
-            {pendingUpdate ? (
-              <button
-                className="btn mint"
-                type="button"
-                disabled={updateBusy}
-                title={`Install ${pendingUpdate.version}`}
-                onClick={() => void runInstallUpdate()}
-              >
-                Install {pendingUpdate.version}
-              </button>
-            ) : null}
-            <button
-              className="btn ghost"
-              type="button"
-              title="Open the latest GitHub release page"
-              onClick={() => void openLatestReleasePage()}
-            >
-              Latest release…
-            </button>
-          </div>
+      <header className="topbar">
+        <div className="brand">
+          <img className="brand-mark" src="./icons/overlay/icon-alert.png" alt="" />
+          <span className="brand-title">EQL Alerts</span>
           {appVersion ? (
-            <div className="header-version">v{appVersion}</div>
+            <span className="brand-version">v{appVersion}</span>
           ) : null}
         </div>
+        <div className="topbar-spacer" />
+        <button
+          type="button"
+          className={`icon-btn ${showSettings ? "on" : ""}`}
+          title="Settings"
+          aria-label="Settings"
+          onClick={() => setShowSettings(true)}
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+            <path d="M19.4 13a7.8 7.8 0 0 0 .1-2l2-1.2-2-3.4-2.3.7a7.6 7.6 0 0 0-1.7-1L15 3.5h-6l-.5 2.6a7.6 7.6 0 0 0-1.7 1L4.5 6.4l-2 3.4 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.4 2.3-.7a7.6 7.6 0 0 0 1.7 1l.5 2.6h6l.5-2.6a7.6 7.6 0 0 0 1.7-1l2.3.7 2-3.4-2-1.2Z" />
+          </svg>
+        </button>
       </header>
 
       {pendingUpdate ? (
@@ -1356,7 +1275,7 @@ export default function App() {
           </span>
           <button
             type="button"
-            className="btn mint"
+            className="btn gold"
             disabled={updateBusy}
             onClick={() => void runInstallUpdate()}
           >
@@ -1372,81 +1291,6 @@ export default function App() {
           </button>
         </div>
       ) : null}
-
-      <section className="class-shelf">
-        <div className="class-shelf-top">
-          <div className="class-shelf-copy">
-            <h2>Your class</h2>
-            <p>Tap a class to arm its trigger sets. Leave the rest off to keep noise down.</p>
-          </div>
-          <div className="class-shelf-stats">
-            <div className="stat-block">
-              <span>Armed</span>
-              <b>{stats.armed}</b>
-            </div>
-            <div className="stat-block">
-              <span>Sets</span>
-              <b>
-                {stats.groupsOn}/{stats.groups}
-              </b>
-            </div>
-            <div className="stat-block">
-              <span>Timers</span>
-              <b>{engine?.timers.length ?? 0}</b>
-            </div>
-            {classPacks.some((p) => p.enabledCount > 0) ? (
-              <button
-                className="btn sm ghost"
-                type="button"
-                onClick={() => {
-                  const ids = classPacks.flatMap((p) => p.groupIds);
-                  setGroupsEnabled(ids, false);
-                }}
-              >
-                Disarm classes
-              </button>
-            ) : null}
-          </div>
-        </div>
-
-        {classPacks.length === 0 ? (
-          <div className="class-empty">
-            {library.groups.length === 0
-              ? "No trigger sets yet — install the starter pack below."
-              : "No class packs found in this library."}
-          </div>
-        ) : (
-          <div className="class-grid">
-            {classPacks.map((pack) => {
-              const on =
-                pack.enabledCount === pack.groupIds.length && pack.groupIds.length > 0;
-              const partial =
-                pack.enabledCount > 0 && pack.enabledCount < pack.groupIds.length;
-              return (
-                <button
-                  key={pack.name}
-                  type="button"
-                  className={`class-tile ${on ? "on" : ""} ${partial ? "partial" : ""}`}
-                  title={`${pack.triggerCount} triggers · ${pack.groupIds.length} sets`}
-                  onClick={() => toggleClassPack(pack)}
-                >
-                  <img
-                    src={classIconUrl(pack.name)}
-                    alt=""
-                    onError={(e) => {
-                      (e.target as HTMLImageElement).style.visibility = "hidden";
-                    }}
-                  />
-                  <span className="class-name">{pack.name}</span>
-                  <span className="class-count">
-                    {pack.enabledCount}/{pack.groupIds.length}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </section>
 
       {error ? (
         <div className="banner error">
@@ -1465,85 +1309,87 @@ export default function App() {
         </div>
       ) : null}
 
-      <div className="workspace">
-        <section className="col">
-          <div className="col-head">
-            <h2>Triggers</h2>
-            <span className="grow" />
-            <button className="btn sm" type="button" onClick={addGroup}>
-              New set
+      <div className="shell">
+        <aside className="sidebar">
+          <div className="sidebar-art" aria-hidden />
+          <div className="sidebar-inner">
+            <div className="sidebar-label">Classes</div>
+            <div className="sidebar-list">
+              {armedPacks.length === 0 ? (
+                <div className="sidebar-empty">
+                  No classes armed yet. Use + Add class to arm your pack.
+                </div>
+              ) : (
+                armedPacks.map((pack) => {
+                  const on =
+                    pack.enabledCount === pack.groupIds.length &&
+                    pack.groupIds.length > 0;
+                  const partial =
+                    pack.enabledCount > 0 &&
+                    pack.enabledCount < pack.groupIds.length;
+                  return (
+                    <button
+                      key={pack.name}
+                      type="button"
+                      className={`class-chip ${partial ? "partial" : ""}`}
+                      style={
+                        {
+                          "--chip-accent": classAccent(pack.name),
+                        } as CSSProperties
+                      }
+                      title={`${pack.enabledCount}/${pack.groupIds.length} sets — click to disarm`}
+                      onClick={() => toggleClassPack(pack)}
+                    >
+                      <img
+                        src={classIconUrl(pack.name)}
+                        alt=""
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.visibility =
+                            "hidden";
+                        }}
+                      />
+                      <span className="class-chip-name">{pack.name}</span>
+                      {on || partial ? <span className="class-chip-dot" /> : null}
+                    </button>
+                  );
+                })
+              )}
+            </div>
+            <div className="sidebar-spacer" />
+            <button
+              type="button"
+              className="sidebar-add"
+              onClick={() => setShowAddClass(true)}
+            >
+              + Add class
             </button>
-          </div>
-          <div className="tools">
-            <input
-              className="search"
-              type="search"
-              placeholder="Search name or pattern…"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <div className="seg">
-              {(
-                [
-                  ["all", "All"],
-                  ["armed", "Armed"],
-                  ["off", "Off"],
-                ] as const
-              ).map(([mode, label]) => (
-                <button
-                  key={mode}
-                  type="button"
-                  className={filter === mode ? "on" : ""}
-                  onClick={() => setFilter(mode)}
-                >
-                  {label}
-                </button>
-              ))}
+            <div className={`sidebar-status ${live ? "live" : ""}`} title={engine?.log_path ?? ""}>
+              <span className="dot" />
+              {live
+                ? `Connected to log${engine?.character ? ` · ${engine.character}` : ""}`
+                : "Not connected to log"}
             </div>
           </div>
-          <div className="scroll">
-            {visibleTree.length === 0 ? (
-              <div className="empty">
-                {library.groups.length === 0 ? (
-                  <>
-                    No triggers loaded.{" "}
-                    <button className="btn sm primary" type="button" onClick={() => void restoreStarter()}>
-                      Install starter pack
-                    </button>
-                  </>
-                ) : (
-                  "Nothing matches that search."
-                )}
-              </div>
-            ) : (
-              visibleTree.map((node) => renderNode(node, 0))
-            )}
-          </div>
-        </section>
+        </aside>
 
-        <section className="col">
-          <div className="col-head">
-            <h2>Inspector</h2>
-            <span className="grow" />
-            {selected ? (
-              <button className="btn sm" type="button" onClick={addSibling}>
-                Add trigger
-              </button>
-            ) : null}
-          </div>
-          <div className="inspector">
-            {!selected || !draft ? (
-              <div className="empty">
-                <b>Quick start</b>
-                <br />
-                1. Find log · 2. Arm your class chip · 3. Open Overlay
-                <br />
-                <br />
-                EQL Essentials Core / Combat / Danger / Fades are armed — Social and range/LOS stay opt-in.
-              </div>
-            ) : (
-              <>
-                <h3>{draft.name || "Untitled"}</h3>
+        <main className="main">
+          <div className="main-scroll">
+            {inspecting && selected && draft ? (
+              <div className="inspector">
+                <div className="detail-bar">
+                  <button
+                    type="button"
+                    className="btn ghost sm"
+                    onClick={() => setInspecting(false)}
+                  >
+                    ← Triggers
+                  </button>
+                  <h2>{draft.name || "Untitled"}</h2>
+                  <span className="grow" />
+                  <button className="btn sm" type="button" onClick={addSibling}>
+                    Add trigger
+                  </button>
+                </div>
                 <p className="path">{selected.group.name}</p>
 
                 <div className="try">
@@ -1729,89 +1575,620 @@ export default function App() {
                     Delete
                   </button>
                 </div>
+              </div>
+            ) : (
+              <>
+                <div className="main-toolbar">
+                  <button
+                    className="btn with-icon"
+                    type="button"
+                    title="Auto-find the newest EverQuest Legends character log"
+                    onClick={() => void attachLog(false)}
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <circle cx="11" cy="11" r="6.5" />
+                      <path d="M16.5 16.5 21 21" />
+                    </svg>
+                    Find log
+                  </button>
+                  <button
+                    className={`btn with-icon ${overlayOpen ? "ghost" : "gold"}`}
+                    type="button"
+                    title={
+                      overlayOpen
+                        ? "Hide the always-on-top timer and toast overlay"
+                        : "Open the always-on-top timer and toast overlay"
+                    }
+                    onClick={() =>
+                      void invoke(overlayOpen ? "close_overlay" : "open_overlay")
+                    }
+                  >
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                      <rect x="3" y="5" width="18" height="14" rx="2" />
+                      <path d="M8 19v2M16 19v2M3 10h18" />
+                    </svg>
+                    {overlayOpen ? "Close overlay" : "Overlay"}
+                  </button>
+                </div>
+
+                <h1 className="main-title">Triggers</h1>
+                <p className="main-sub">Configure when alerts are triggered.</p>
+
+                <div className="tools">
+                  <input
+                    className="search"
+                    type="search"
+                    placeholder="Search name or pattern…"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                  />
+                  <div className="filter-seg">
+                    {(
+                      [
+                        ["all", "All"],
+                        ["armed", "Armed"],
+                        ["off", "Off"],
+                      ] as const
+                    ).map(([mode, label]) => (
+                      <button
+                        key={mode}
+                        type="button"
+                        className={`btn sm ${filter === mode ? "gold" : "ghost"}`}
+                        onClick={() => setFilter(mode)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {visibleTree.length === 0 ? (
+                  <div className="empty">
+                    {library.groups.length === 0 ? (
+                      <>
+                        No triggers loaded.{" "}
+                        <button
+                          className="btn sm primary"
+                          type="button"
+                          onClick={() => void restoreStarter()}
+                        >
+                          Install starter pack
+                        </button>
+                      </>
+                    ) : (
+                      "Nothing matches that search."
+                    )}
+                  </div>
+                ) : (
+                  visibleTree.map((node) => renderRootSection(node))
+                )}
+
+                <section className="activity-strip">
+                  <div className="activity-strip-head">
+                    <h3>Activity</h3>
+                    <span className="grow" />
+                    <button
+                      className="btn sm ghost"
+                      type="button"
+                      onClick={() => setActivityOpen((v) => !v)}
+                    >
+                      {activityOpen ? "Hide" : "Show"}
+                    </button>
+                    <button
+                      className="btn sm"
+                      type="button"
+                      onClick={() => void clearAlerts()}
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  {activityOpen ? (
+                    <div className="activity-grid">
+                      <div className="activity-col">
+                        <h4>Timers</h4>
+                        {(engine?.timers.length ?? 0) === 0 ? (
+                          <div className="quiet">No running timers</div>
+                        ) : (
+                          engine!.timers.map((timer) => {
+                            const left = remainingSecs(timer, now);
+                            const pct = Math.max(
+                              0,
+                              Math.min(
+                                100,
+                                ((timer.ends_ms - now) / (timer.duration_secs * 1000)) *
+                                  100
+                              )
+                            );
+                            return (
+                              <div className="timer" key={timer.id}>
+                                <div className="t-head">
+                                  <div className="t-name">{timer.name}</div>
+                                  <button
+                                    type="button"
+                                    className="timer-dismiss"
+                                    title="Clear this timer"
+                                    onClick={() => {
+                                      void invoke<EngineState>("clear_timer", {
+                                        timerId: timer.id,
+                                      })
+                                        .then(setEngine)
+                                        .catch((err) => setError(String(err)));
+                                    }}
+                                  >
+                                    ×
+                                  </button>
+                                </div>
+                                <div className="bar">
+                                  <i style={{ width: `${pct}%` }} />
+                                </div>
+                                <div className="left">{formatCountdown(left)}</div>
+                              </div>
+                            );
+                          })
+                        )}
+                      </div>
+                      <div className="activity-col">
+                        <h4>Fired</h4>
+                        {(engine?.recent_alerts.length ?? 0) === 0 ? (
+                          <div className="quiet">Waiting for matches on the live log</div>
+                        ) : (
+                          engine!.recent_alerts.map((alert, i) => (
+                            <div
+                              className={`event ${i === 0 ? "fresh" : ""}`}
+                              key={alert.id}
+                            >
+                              <div className="when">{formatTime(alert.at_ms)}</div>
+                              <div className="text">{alert.text}</div>
+                              <div className="from">
+                                {alert.trigger_name} · {alert.kind}
+                              </div>
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </div>
+                  ) : null}
+                </section>
               </>
             )}
           </div>
-        </section>
-
-        <section className="col col-activity">
-          <div className="col-head">
-            <h2>Activity</h2>
-            <span className="grow" />
-            <button
-              className="btn sm"
-              type="button"
-              onClick={() => void clearAlerts()}
-            >
-              Clear
-            </button>
-          </div>
-          <div className="scroll">
-            <div className="activity-block">
-              <h3>Timers</h3>
-              {(engine?.timers.length ?? 0) === 0 ? (
-                <div className="empty" style={{ margin: "0 6px" }}>
-                  No running timers
-                </div>
-              ) : (
-                engine!.timers.map((timer) => {
-                  const left = remainingSecs(timer, now);
-                  const pct = Math.max(
-                    0,
-                    Math.min(
-                      100,
-                      ((timer.ends_ms - now) / (timer.duration_secs * 1000)) * 100
-                    )
-                  );
-                  return (
-                    <div className="timer" key={timer.id}>
-                      <div className="t-head">
-                        <div className="t-name">{timer.name}</div>
-                        <button
-                          type="button"
-                          className="timer-dismiss"
-                          title="Clear this timer"
-                          onClick={() => {
-                            void invoke<EngineState>("clear_timer", {
-                              timerId: timer.id,
-                            })
-                              .then(setEngine)
-                              .catch((err) => setError(String(err)));
-                          }}
-                        >
-                          ×
-                        </button>
-                      </div>
-                      <div className="bar">
-                        <i style={{ width: `${pct}%` }} />
-                      </div>
-                      <div className="left">{formatCountdown(left)}</div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-            <div className="activity-block">
-              <h3>Fired</h3>
-              {(engine?.recent_alerts.length ?? 0) === 0 ? (
-                <div className="empty" style={{ margin: "0 6px" }}>
-                  Waiting for matches on the live log
-                </div>
-              ) : (
-                engine!.recent_alerts.map((alert, i) => (
-                  <div className={`event ${i === 0 ? "fresh" : ""}`} key={alert.id}>
-                    <div className="when">{formatTime(alert.at_ms)}</div>
-                    <div className="text">{alert.text}</div>
-                    <div className="from">
-                      {alert.trigger_name} · {alert.kind}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-        </section>
+        </main>
       </div>
+
+      {showSettings ? (
+        <>
+          <div
+            className="drawer-backdrop"
+            onClick={() => setShowSettings(false)}
+          />
+          <aside className="drawer" role="dialog" aria-label="Settings">
+            <div className="drawer-head">
+              <h2>Settings</h2>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Close settings"
+                onClick={() => setShowSettings(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="drawer-body">
+              <section className="settings-section">
+                <h3>Log connection</h3>
+                <p className="settings-note">{shortPath(engine?.log_path ?? null)}</p>
+                <div className="settings-row">
+                  <button
+                    className="btn primary"
+                    type="button"
+                    onClick={() => void attachLog(false)}
+                  >
+                    Find log
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => void attachLog(true)}
+                  >
+                    Browse…
+                  </button>
+                  {live ? (
+                    <button className="btn ghost" type="button" onClick={() => void stop()}>
+                      Disconnect
+                    </button>
+                  ) : (
+                    <button
+                      className="btn"
+                      type="button"
+                      disabled={!(engine?.log_path || settings?.last_log_path)}
+                      onClick={() => void reconnect()}
+                    >
+                      Reconnect
+                    </button>
+                  )}
+                </div>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={settings?.auto_monitor_on_start ?? true}
+                    onChange={(e) =>
+                      void patchSettings({ auto_monitor_on_start: e.target.checked })
+                    }
+                  />
+                  Auto-monitor on start
+                </label>
+              </section>
+
+              <section className="settings-section">
+                <h3>Voice & audio</h3>
+                <label className="audio-field">
+                  <span className="audio-label">Voice</span>
+                  <div className="audio-inline">
+                    <select
+                      className="voice-select"
+                      value={
+                        settings?.voice_id || settings?.voice_female || "bf_isabella"
+                      }
+                      onChange={(e) => {
+                        const voice_id = e.target.value;
+                        const male =
+                          voice_id.startsWith("am_") || voice_id.startsWith("bm_");
+                        void patchSettings({
+                          voice_id,
+                          voice_gender: male ? "male" : "female",
+                          voice_female: male
+                            ? settings?.voice_female ?? "bf_isabella"
+                            : voice_id,
+                          voice_male: male
+                            ? voice_id
+                            : settings?.voice_male ?? "am_michael",
+                        });
+                        if (voicePreviewTimer.current != null) {
+                          window.clearTimeout(voicePreviewTimer.current);
+                        }
+                        voicePreviewTimer.current = window.setTimeout(() => {
+                          void previewVoice(
+                            voice_id,
+                            "Out of mana",
+                            settings?.voice_volume ?? 0.2
+                          )
+                            .then((msg) => {
+                              setNote(msg);
+                              setError(null);
+                            })
+                            .catch((err) => {
+                              setError(`Voice preview failed: ${String(err)}`);
+                            });
+                        }, 450);
+                      }}
+                    >
+                      <optgroup label="Female">
+                        {(kokoroVoices.length
+                          ? kokoroVoices
+                          : [
+                              {
+                                id: "bf_isabella",
+                                label: "Isabella (UK)",
+                                gender: "female",
+                                locale: "en-GB",
+                              },
+                              {
+                                id: "af_bella",
+                                label: "Bella",
+                                gender: "female",
+                                locale: "en-US",
+                              },
+                            ]
+                        )
+                          .filter((v) => v.gender === "female")
+                          .map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.label}
+                              {v.locale !== "en-US" ? ` (${v.locale})` : ""}
+                            </option>
+                          ))}
+                      </optgroup>
+                      <optgroup label="Male">
+                        {(kokoroVoices.length
+                          ? kokoroVoices
+                          : [
+                              {
+                                id: "am_michael",
+                                label: "Michael",
+                                gender: "male",
+                                locale: "en-US",
+                              },
+                              {
+                                id: "am_fenrir",
+                                label: "Fenrir",
+                                gender: "male",
+                                locale: "en-US",
+                              },
+                            ]
+                        )
+                          .filter((v) => v.gender === "male")
+                          .map((v) => (
+                            <option key={v.id} value={v.id}>
+                              {v.label}
+                              {v.locale !== "en-US" ? ` (${v.locale})` : ""}
+                            </option>
+                          ))}
+                      </optgroup>
+                    </select>
+                    <button
+                      className="btn sm"
+                      type="button"
+                      onClick={() => {
+                        const voice_id =
+                          settings?.voice_id ||
+                          settings?.voice_female ||
+                          "bf_isabella";
+                        void previewVoice(
+                          voice_id,
+                          "Out of mana",
+                          settings?.voice_volume ?? 0.2
+                        )
+                          .then((msg) => {
+                            setNote(msg);
+                            setError(null);
+                          })
+                          .catch((err) => {
+                            setError(`Voice preview failed: ${String(err)}`);
+                            setNote(null);
+                          });
+                      }}
+                    >
+                      Preview
+                    </button>
+                  </div>
+                </label>
+                <label className="audio-field">
+                  <span className="audio-label">Volume</span>
+                  <div className="audio-vol-line">
+                    <input
+                      type="range"
+                      min={0}
+                      max={100}
+                      value={Math.round((settings?.voice_volume ?? 0.2) * 100)}
+                      onChange={(e) => {
+                        const voice_volume = Number(e.target.value) / 100;
+                        void patchSettings({ voice_volume });
+                      }}
+                      onPointerUp={(e) => {
+                        const voice_volume = Number(e.currentTarget.value) / 100;
+                        const voice_id =
+                          settings?.voice_id ||
+                          settings?.voice_female ||
+                          "bf_isabella";
+                        void previewVoice(
+                          voice_id,
+                          "Out of mana",
+                          voice_volume
+                        ).catch(() => undefined);
+                      }}
+                    />
+                    <em className="voice-vol-pct">
+                      {Math.round((settings?.voice_volume ?? 0.2) * 100)}%
+                    </em>
+                  </div>
+                </label>
+                <label className="audio-field">
+                  <span className="audio-label">Output</span>
+                  <select
+                    className="output-select"
+                    value={settings?.audio_output_device ?? ""}
+                    onChange={(e) => {
+                      const audio_output_device = e.target.value;
+                      const voice_id =
+                        settings?.voice_id ||
+                        settings?.voice_female ||
+                        "bf_isabella";
+                      void patchSettings({ audio_output_device }).then(() =>
+                        previewVoice(
+                          voice_id,
+                          "Out of mana",
+                          settings?.voice_volume ?? 0.2
+                        )
+                          .then((msg) => {
+                            setNote(msg);
+                            setError(null);
+                          })
+                          .catch((err) => {
+                            setError(`Output preview failed: ${String(err)}`);
+                          })
+                      );
+                    }}
+                  >
+                    <option value="">System default</option>
+                    {audioDevices.map((d) => {
+                      let label = d.name;
+                      if (d.is_default) label = `${label} · default`;
+                      if (d.channels > 2) label = `${label} · ${d.channels}ch`;
+                      return (
+                        <option key={d.name} value={d.name}>
+                          {label}
+                        </option>
+                      );
+                    })}
+                  </select>
+                </label>
+              </section>
+
+              <section className="settings-section">
+                <h3>Overlay & activity</h3>
+                <div className="settings-row">
+                  <button
+                    className={overlayOpen ? "btn ghost" : "btn gold"}
+                    type="button"
+                    onClick={() =>
+                      void invoke(overlayOpen ? "close_overlay" : "open_overlay")
+                    }
+                  >
+                    {overlayOpen ? "Close overlay" : "Open overlay"}
+                  </button>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={() => void clearTimers()}
+                  >
+                    Clear timers
+                  </button>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={() => void clearAlerts()}
+                  >
+                    Clear alerts
+                  </button>
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <h3>Trigger library</h3>
+                <div className="settings-row">
+                  <button className="btn" type="button" onClick={addGroup}>
+                    New set
+                  </button>
+                  <button
+                    className="btn"
+                    type="button"
+                    onClick={() => void importGinaPack()}
+                  >
+                    Import…
+                  </button>
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={() => void restoreStarter()}
+                  >
+                    Reset starter
+                  </button>
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <h3>Updates</h3>
+                <p className="settings-note">
+                  {appVersion ? `Installed v${appVersion}` : "Version unknown"}
+                  {pendingUpdate ? ` · ${pendingUpdate.version} available` : ""}
+                </p>
+                <div className="settings-row">
+                  <button
+                    className="btn"
+                    type="button"
+                    disabled={updateBusy}
+                    onClick={() => void runUpdateCheck()}
+                  >
+                    {updateBusy ? "Checking…" : "Check for updates"}
+                  </button>
+                  {pendingUpdate ? (
+                    <button
+                      className="btn gold"
+                      type="button"
+                      disabled={updateBusy}
+                      onClick={() => void runInstallUpdate()}
+                    >
+                      Install {pendingUpdate.version}
+                    </button>
+                  ) : null}
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={() => void openLatestReleasePage()}
+                  >
+                    Latest release…
+                  </button>
+                </div>
+              </section>
+
+              <section className="settings-section">
+                <h3>Help</h3>
+                <div className="settings-row">
+                  <button
+                    className="btn ghost"
+                    type="button"
+                    onClick={() => {
+                      setShowSettings(false);
+                      setShowQuickStart(true);
+                    }}
+                  >
+                    Quick start guide
+                  </button>
+                </div>
+              </section>
+            </div>
+          </aside>
+        </>
+      ) : null}
+
+      {showAddClass ? (
+        <div className="modal-backdrop" onClick={() => setShowAddClass(false)}>
+          <div
+            className="modal-card"
+            role="dialog"
+            aria-label="Add class"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-head">
+              <h2>Add class</h2>
+              <button
+                type="button"
+                className="icon-btn"
+                aria-label="Close"
+                onClick={() => setShowAddClass(false)}
+              >
+                ✕
+              </button>
+            </div>
+            <div className="modal-body">
+              <p className="settings-note" style={{ fontFamily: "inherit" }}>
+                Arm a class pack to show it in the sidebar and fire its triggers.
+              </p>
+              {classPacks.length === 0 ? (
+                <div className="empty">
+                  No class packs in this library. Install the starter pack from
+                  Settings.
+                </div>
+              ) : (
+                <div className="add-class-grid">
+                  {classPacks.map((pack) => {
+                    const on =
+                      pack.enabledCount === pack.groupIds.length &&
+                      pack.groupIds.length > 0;
+                    const partial =
+                      pack.enabledCount > 0 &&
+                      pack.enabledCount < pack.groupIds.length;
+                    return (
+                      <button
+                        key={pack.name}
+                        type="button"
+                        className={`add-class-tile ${on || partial ? "on" : ""}`}
+                        style={
+                          {
+                            "--chip-accent": classAccent(pack.name),
+                          } as CSSProperties
+                        }
+                        onClick={() => toggleClassPack(pack)}
+                      >
+                        <img
+                          src={classIconUrl(pack.name)}
+                          alt=""
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.visibility =
+                              "hidden";
+                          }}
+                        />
+                        <span>{pack.name}</span>
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }
+
