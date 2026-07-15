@@ -25,7 +25,10 @@ import {
   checkForAppUpdate,
   installAppUpdate,
   openLatestReleasePage,
+  updateProgressLabel,
+  updateProgressPercent,
   type PendingUpdate,
+  type UpdateProgress,
 } from "./updates";
 import { getVersion } from "@tauri-apps/api/app";
 
@@ -522,11 +525,11 @@ function triggerToDraft(t: Trigger): Draft {
 
 function draftToTrigger(id: string, draft: Draft): Trigger {
   const timerRaw = draft.timer_seconds.trim();
+  // TTS mode: no chime. Sound mode: keep the pick (including "none" = visual only).
   let sound: string | null = null;
-  if (draft.sound.trim() && draft.sound !== "none") {
-    sound = draft.sound.trim();
-  } else if (!draft.tts_enabled) {
-    sound = "ping";
+  if (!draft.tts_enabled) {
+    const picked = draft.sound.trim() || "none";
+    sound = picked;
   }
   return {
     id,
@@ -569,6 +572,7 @@ export default function App() {
   const [appVersion, setAppVersion] = useState("");
   const [pendingUpdate, setPendingUpdate] = useState<PendingUpdate | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [updateProgress, setUpdateProgress] = useState<UpdateProgress | null>(null);
   const [triggersLoading, setTriggersLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddClass, setShowAddClass] = useState(false);
@@ -718,12 +722,16 @@ export default function App() {
   async function runInstallUpdate() {
     setUpdateBusy(true);
     setError(null);
-    setNote("Downloading update…");
+    setNote(null);
+    setUpdateProgress({ phase: "checking", downloaded: 0, total: null });
     try {
-      await installAppUpdate();
+      await installAppUpdate((progress) => {
+        setUpdateProgress(progress);
+      });
     } catch (err) {
+      setUpdateProgress(null);
       setNote("Update install failed — use Latest release…");
-      setError(String(err));
+      setError(String(err).replace(/^Error:\s*/, ""));
     } finally {
       setUpdateBusy(false);
     }
@@ -1533,6 +1541,9 @@ export default function App() {
   const live = !!engine?.monitoring;
   const armedPacks = classPacks.filter((p) => p.enabledCount > 0);
   const activeTimers = (engine?.timers ?? []).filter((t) => t.ends_ms > now);
+  const installPercent = updateProgress
+    ? updateProgressPercent(updateProgress)
+    : null;
 
   return (
     <div className="app">
@@ -1557,7 +1568,7 @@ export default function App() {
         </div>
       </header>
 
-      {pendingUpdate ? (
+      {pendingUpdate && !updateProgress ? (
         <div className="update-banner">
           <span>
             Update <strong>{pendingUpdate.version}</strong> is available
@@ -1570,7 +1581,7 @@ export default function App() {
             title="Download and install the available update"
             onClick={() => void runInstallUpdate()}
           >
-            {updateBusy ? "Updating…" : "Install update"}
+            Install update
           </button>
           <button
             type="button"
@@ -2123,6 +2134,52 @@ export default function App() {
         </main>
       </div>
 
+      {updateProgress ? (
+        <div
+          className="update-progress-backdrop"
+          role="alertdialog"
+          aria-busy="true"
+          aria-live="polite"
+          aria-label="Installing update"
+        >
+          <div className="update-progress-card">
+            <h2>Installing update</h2>
+            {pendingUpdate ? (
+              <p className="update-progress-version">
+                Version {pendingUpdate.version}
+                {appVersion ? ` (from ${appVersion})` : ""}
+              </p>
+            ) : null}
+            <p className="update-progress-status">
+              {updateProgressLabel(updateProgress)}
+            </p>
+            {installPercent != null ? (
+              <div
+                className="update-progress-bar"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={installPercent}
+              >
+                <i style={{ width: `${installPercent}%` }} />
+              </div>
+            ) : (
+              <div
+                className="update-progress-bar indeterminate"
+                role="progressbar"
+                aria-label={updateProgressLabel(updateProgress)}
+              >
+                <i />
+              </div>
+            )}
+            <p className="update-progress-hint">
+              Keep the app open. The installer will open when the download
+              finishes, then EQL Alerts will restart.
+            </p>
+          </div>
+        </div>
+      ) : null}
+
       {showSettings ? (
         <div
           className="drawer-backdrop"
@@ -2501,7 +2558,9 @@ export default function App() {
                       title={`Install update ${pendingUpdate.version}`}
                       onClick={() => void runInstallUpdate()}
                     >
-                      Install {pendingUpdate.version}
+                      {updateProgress
+                        ? updateProgressLabel(updateProgress)
+                        : `Install ${pendingUpdate.version}`}
                     </button>
                   ) : null}
                   <button

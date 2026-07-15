@@ -2527,12 +2527,12 @@
           "search": "^You (have (failed to mend your wounds|worsened your wounds)|mend your wounds and heal some damage)(.|!)$",
           "use_regex": true,
           "display_text": null,
-          "timer_seconds": 361,
+          "timer_seconds": 90,
           "timer_name": "Mend",
           "early_end": [],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL base is 1m 30s (not classic 6m). Overlay also syncs from “You can use the ability … again in …” when you press early."
         },
         {
           "id": "24fc739023d9-2",

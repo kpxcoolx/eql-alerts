@@ -272,13 +272,13 @@ impl TriggerEngine {
             None
         };
 
+        // Sound mode only: play chime when set. Explicit "none"/empty = visual only.
         let sound = if !trigger.tts_enabled {
-            let s = trigger
+            trigger
                 .sound
                 .as_deref()
                 .filter(|s| !s.trim().is_empty() && !s.eq_ignore_ascii_case("none"))
-                .unwrap_or("ping");
-            Some(s.to_string())
+                .map(|s| s.to_string())
         } else {
             None
         };
@@ -606,15 +606,14 @@ impl TriggerEngine {
                 None
             };
 
-            // Chime only when TTS is off (sound mode).
+            // Chime only when TTS is off (sound mode). Explicit "none" = visual only.
             let mut sound = if !compiled.trigger.tts_enabled {
-                let s = compiled
+                compiled
                     .trigger
                     .sound
                     .as_deref()
                     .filter(|s| !s.trim().is_empty() && !s.eq_ignore_ascii_case("none"))
-                    .unwrap_or("ping");
-                Some(s.to_string())
+                    .map(|s| s.to_string())
             } else {
                 None
             };

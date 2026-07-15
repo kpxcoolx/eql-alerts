@@ -677,26 +677,40 @@ pub fn ensure_eql_ability_timers(library: &mut TriggerLibrary) -> usize {
             let is_loh = trigger.id == "80a4144d8e7f-1"
                 || trigger.name == "Lay Hands Cooldown"
                 || trigger.timer_name.as_deref() == Some("Lay Hands Cooldown");
-            if !is_loh {
-                continue;
+            if is_loh {
+                let before = serde_json::to_string(trigger).unwrap_or_default();
+                trigger.search = "^You healed .+ by Lay on Hands".to_string();
+                trigger.use_regex = true;
+                trigger.display_text = Some("Lay on Hands".to_string());
+                trigger.timer_seconds = Some(900);
+                trigger.timer_name = Some("Lay on Hands".to_string());
+                trigger.early_end.clear();
+                if trigger.speak.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
+                    trigger.speak = Some("Lay on Hands".to_string());
+                }
+                trigger.comments = Some(
+                    "EQL base is 15m at early ranks (not classic 72m). Overlay also syncs from “You can use the ability … again in …” when you press early."
+                        .to_string(),
+                );
+                let after = serde_json::to_string(trigger).unwrap_or_default();
+                if before != after {
+                    changed += 1;
+                }
             }
-            let before = serde_json::to_string(trigger).unwrap_or_default();
-            trigger.search = "^You healed .+ by Lay on Hands".to_string();
-            trigger.use_regex = true;
-            trigger.display_text = Some("Lay on Hands".to_string());
-            trigger.timer_seconds = Some(900);
-            trigger.timer_name = Some("Lay on Hands".to_string());
-            trigger.early_end.clear();
-            if trigger.speak.as_ref().map(|s| s.trim().is_empty()).unwrap_or(true) {
-                trigger.speak = Some("Lay on Hands".to_string());
-            }
-            trigger.comments = Some(
-                "EQL base is 15m at early ranks (not classic 72m). Overlay also syncs from “You can use the ability … again in …” when you press early."
-                    .to_string(),
-            );
-            let after = serde_json::to_string(trigger).unwrap_or_default();
-            if before != after {
-                changed += 1;
+
+            let is_mend = trigger.id == "24fc739023d9-1" || trigger.name == "Mend Cooldown";
+            if is_mend {
+                let before = serde_json::to_string(trigger).unwrap_or_default();
+                trigger.timer_seconds = Some(90);
+                trigger.timer_name = Some("Mend".to_string());
+                trigger.comments = Some(
+                    "EQL base is 1m 30s (not classic 6m). Overlay also syncs from “You can use the ability … again in …” when you press early."
+                        .to_string(),
+                );
+                let after = serde_json::to_string(trigger).unwrap_or_default();
+                if before != after {
+                    changed += 1;
+                }
             }
         }
     }
@@ -1090,6 +1104,21 @@ mod tests {
             .expect("dazzle");
         assert_eq!(dazzle.timer_name.as_deref(), Some("Dazzle - ${1}"));
 
+        let mend = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.id == "24fc739023d9-1")
+            .expect("mend");
+        assert_eq!(mend.timer_seconds, Some(90));
+        let loh = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.id == "80a4144d8e7f-1")
+            .expect("lay on hands");
+        assert_eq!(loh.timer_seconds, Some(900));
+
         let shm = pack
             .groups
             .iter()
@@ -1149,6 +1178,57 @@ mod tests {
                 "Malo Wore Off",
             ]
         );
+    }
+
+    #[test]
+    fn ensure_eql_ability_timers_patches_mend_and_loh() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "cds".into(),
+                name: "Classes / Monk / Cooldowns".into(),
+                enabled: false,
+                triggers: vec![
+                    Trigger {
+                        id: "24fc739023d9-1".into(),
+                        name: "Mend Cooldown".into(),
+                        enabled: true,
+                        search: "mend".into(),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(361),
+                        timer_name: Some("Mend".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                    Trigger {
+                        id: "80a4144d8e7f-1".into(),
+                        name: "Lay Hands Cooldown".into(),
+                        enabled: true,
+                        search: "old".into(),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(4320),
+                        timer_name: Some("Lay Hands Cooldown".into()),
+                        early_end: vec!["^You have been slain".into()],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                ],
+            }],
+        };
+        assert!(ensure_eql_ability_timers(&mut lib) >= 2);
+        assert_eq!(lib.groups[0].triggers[0].timer_seconds, Some(90));
+        assert_eq!(lib.groups[0].triggers[1].timer_seconds, Some(900));
+        assert_eq!(
+            lib.groups[0].triggers[1].timer_name.as_deref(),
+            Some("Lay on Hands")
+        );
+        assert_eq!(ensure_eql_ability_timers(&mut lib), 0);
     }
 
     #[test]

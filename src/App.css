@@ -567,6 +567,78 @@ button {
   color: var(--text);
 }
 
+.update-progress-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 120;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 28px;
+  background: rgba(4, 4, 3, 0.78);
+  backdrop-filter: blur(8px);
+}
+
+.update-progress-card {
+  width: min(420px, 100%);
+  padding: 28px 30px 24px;
+  border-radius: 14px;
+  border: 1px solid var(--border-strong);
+  background: linear-gradient(180deg, #2c261f 0%, #1c1814 100%);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.45);
+  text-align: center;
+}
+
+.update-progress-card h2 {
+  margin: 0 0 6px;
+  font-family: var(--font-display);
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--amber-hot);
+}
+
+.update-progress-version {
+  margin: 0 0 16px;
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.update-progress-status {
+  margin: 0 0 14px;
+  font-size: 20px;
+  color: var(--text);
+}
+
+.update-progress-hint {
+  margin: 16px 0 0;
+  font-size: 16px;
+  line-height: 1.35;
+  color: var(--muted);
+}
+
+.update-progress-bar {
+  width: 100%;
+  height: 10px;
+  border-radius: 99px;
+  background: rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.update-progress-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: linear-gradient(90deg, #c45a1a, var(--amber));
+  transition: width 0.2s ease-out;
+}
+
+.update-progress-bar.indeterminate > i {
+  width: 40%;
+  transition: none;
+  animation: loading-slide 1.1s ease-in-out infinite;
+}
+
 /* —— Trigger groups —— */
 .trigger-group {
   margin-bottom: 16px;
