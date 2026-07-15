@@ -888,8 +888,8 @@ fn ensure_early_end(trigger: &mut Trigger, pattern: &str) {
     }
 }
 
-/// Scourge/Sicken/Plague share "sweats and shivers, looking feverish."
-/// Match your land hit instead so other casters' DoTs don't start clocks.
+/// Shared DoT emotes fire for any caster (you, pet, mob, other players).
+/// Rewrite to your land-hit line so a timer starts only when you land the DoT.
 pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
@@ -898,6 +898,7 @@ pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
             let name = trigger.name.as_str();
             let uses_shared_fever =
                 trigger.search.contains("sweats and shivers, looking feverish");
+            let uses_shared_poison = trigger.search.contains("has been poisoned");
 
             if name == "Scourge" && uses_shared_fever {
                 trigger.search =
@@ -918,6 +919,27 @@ pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
                 if trigger.comments.is_none() {
                     trigger.comments = Some(
                         "EQL: match your land hit — feverish line is shared with Sicken/Scourge"
+                            .into(),
+                    );
+                }
+            } else if name == "Venom of the Snake" && uses_shared_poison {
+                trigger.search = r"^You hit ([\w -'`]+) for \d+ points of poison damage by Venom of the Snake\.$"
+                    .into();
+                trigger.use_regex = true;
+                if trigger.comments.is_none() {
+                    trigger.comments = Some(
+                        "EQL: match your land hit — poisoned line is shared with other poison DoTs"
+                            .into(),
+                    );
+                }
+            } else if name == "Envenomed Bolt" && uses_shared_poison {
+                trigger.search =
+                    r"^You hit ([\w -'`]+) for \d+ points of poison damage by Envenomed Bolt\.$"
+                        .into();
+                trigger.use_regex = true;
+                if trigger.comments.is_none() {
+                    trigger.comments = Some(
+                        "EQL: match your land hit — poisoned line is shared with other poison DoTs"
                             .into(),
                     );
                 }
@@ -1361,6 +1383,60 @@ mod tests {
     }
 
     #[test]
+    fn ensure_eql_disease_dot_timers_rewrites_shared_poison_line() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![
+                    Trigger {
+                        id: "venom".into(),
+                        name: "Venom of the Snake".into(),
+                        enabled: true,
+                        search: r"^([\w -'`]+) has been poisoned\.$".into(),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(42),
+                        timer_name: Some("Venom of the Snake - ${1}".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                    Trigger {
+                        id: "bolt".into(),
+                        name: "Envenomed Bolt".into(),
+                        enabled: true,
+                        search: r"^([\w -'`]+) has been poisoned\.$".into(),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(42),
+                        timer_name: Some("Envenomed Bolt - ${1}".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                ],
+            }],
+        };
+        assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 2);
+        assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 0);
+        assert!(lib.groups[0].triggers[0]
+            .search
+            .contains("by Venom of the Snake"));
+        assert!(lib.groups[0].triggers[1]
+            .search
+            .contains("by Envenomed Bolt"));
+        assert!(!lib.groups[0].triggers[0]
+            .search
+            .contains("has been poisoned"));
+    }
+
+    #[test]
     fn starter_scourge_ignores_other_casters_sicken() {
         use crate::engine::TriggerEngine;
 
@@ -1403,6 +1479,61 @@ mod tests {
         assert_eq!(
             yours[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Scourge - a zol ghoul knight")
+        );
+    }
+
+    #[test]
+    fn starter_venom_ignores_mob_and_other_player_poison() {
+        use crate::engine::TriggerEngine;
+
+        let venom = Trigger {
+            id: "venom".into(),
+            name: "Venom of the Snake".into(),
+            enabled: true,
+            search: r"^You hit ([\w -'`]+) for \d+ points of poison damage by Venom of the Snake\.$"
+                .into(),
+            use_regex: true,
+            display_text: None,
+            timer_seconds: Some(42),
+            timer_name: Some("Venom of the Snake - ${1}".into()),
+            early_end: vec![],
+            sound: None,
+            speak: None,
+            tts_enabled: false,
+            comments: None,
+        };
+        let mut engine = TriggerEngine::new(TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Shaman DoTs".into(),
+                enabled: true,
+                triggers: vec![venom],
+            }],
+        });
+
+        // Mob land on a player, or other player's Envenomed Breath.
+        assert!(engine
+            .process_action("Kabektik has been poisoned.")
+            .is_empty());
+        assert!(engine
+            .process_action(
+                "a zol ghoul knight hit Kabektik for 39 points of poison damage by Venom of the Snake.",
+            )
+            .is_empty());
+        assert!(engine
+            .process_action(
+                "Jasab hit a vis ghoul knight for 21 points of poison damage by Envenomed Breath.",
+            )
+            .is_empty());
+        assert!(engine.snapshot().timers.is_empty());
+
+        let yours = engine.process_action(
+            "You hit a vampire bat for 39 points of poison damage by Venom of the Snake.",
+        );
+        assert_eq!(yours.len(), 1);
+        assert_eq!(
+            yours[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Venom of the Snake - a vampire bat")
         );
     }
 }
