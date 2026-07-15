@@ -65,7 +65,15 @@ fn python_bin(root: &Path) -> Option<PathBuf> {
 }
 
 fn root_ready(root: &Path) -> bool {
-    python_bin(root).is_some() && models_ready(root)
+    if python_bin(root).is_none() || !models_ready(root) {
+        return false;
+    }
+    // Packaged Windows zip writes python_relpath.txt + .deps-ok after a real pip install.
+    // Reject older broken extracts that only had bare CPython + models.
+    if root.join("python_relpath.txt").exists() && !root.join(".deps-ok").exists() {
+        return false;
+    }
+    true
 }
 
 /// Writable install location for the packaged Kokoro zip (Windows NSIS/Mac).
@@ -376,12 +384,19 @@ pub fn ensure_daemon() -> Result<(), String> {
         }
     }
 
+    let stderr_path = root.join("daemon.stderr.log");
+    let stderr_file = std::fs::File::create(&stderr_path).map_err(|e| {
+        let msg = format!("create kokoro stderr log: {e}");
+        crate::app_log::write(&format!("Kokoro: {msg}"));
+        msg
+    })?;
+
     let mut cmd = Command::new(&py);
     cmd.arg(&script)
         .args(["serve", "--host", "127.0.0.1", "--port", &KOKORO_PORT.to_string()])
         .current_dir(&root)
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::from(stderr_file));
     #[cfg(windows)]
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
@@ -394,24 +409,50 @@ pub fn ensure_daemon() -> Result<(), String> {
     *guard = Some(child);
     drop(guard);
 
-    for _ in 0..100 {
-        if daemon_healthy() {
+    // Model loads before the socket opens — allow a few minutes on slow VMs.
+    // Never call daemon_healthy() while the port is closed (2s connect timeout each try).
+    for _ in 0..1800 {
+        if let Ok(mut g) = DAEMON.lock() {
+            if let Some(child) = g.as_mut() {
+                if let Ok(Some(status)) = child.try_wait() {
+                    let tail = read_log_tail(&stderr_path, 1200);
+                    let err = format!("Kokoro daemon exited ({status}): {tail}");
+                    crate::app_log::write(&format!("Kokoro: {err}"));
+                    return Err(err);
+                }
+            }
+        }
+        if port_open() && daemon_healthy() {
             crate::app_log::write("Kokoro: daemon healthy");
             return Ok(());
         }
-        if port_open() {
-            // Daemon accepted TCP but /voices not ready yet.
-            let _ = http_get("/voices", 5_000);
-            if daemon_healthy() {
-                crate::app_log::write("Kokoro: daemon healthy");
-                return Ok(());
-            }
-        }
         thread::sleep(Duration::from_millis(100));
     }
-    let err = "Kokoro daemon failed to start (timeout)".to_string();
+    let tail = read_log_tail(&stderr_path, 1200);
+    let err = format!("Kokoro daemon failed to start (timeout): {tail}");
     crate::app_log::write(&format!("Kokoro: {err}"));
     Err(err)
+}
+
+fn read_log_tail(path: &Path, max_chars: usize) -> String {
+    let Ok(text) = std::fs::read_to_string(path) else {
+        return String::new();
+    };
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return "(no stderr)".into();
+    }
+    let collapsed = trimmed.replace('\r', "");
+    if collapsed.chars().count() <= max_chars {
+        return collapsed;
+    }
+    let start = collapsed
+        .char_indices()
+        .rev()
+        .nth(max_chars - 1)
+        .map(|(i, _)| i)
+        .unwrap_or(0);
+    format!("…{}", &collapsed[start..])
 }
 
 /// Start daemon if needed, then return the live voice catalog.

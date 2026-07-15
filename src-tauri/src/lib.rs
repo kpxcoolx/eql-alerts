@@ -663,13 +663,16 @@ fn test_speech(
         "test_speech: {line:?} voice={voice} vol={:.2}",
         settings.voice_volume
     ));
-    match tts::speak_now(&line, &voice, settings.voice_volume) {
-        Ok(()) => Ok(format!("Spoke with {voice}: “{line}”")),
-        Err(err) => {
+    // Speak off the UI thread — Kokoro cold-start must not freeze/crash the window.
+    let voice_bg = voice.clone();
+    let line_bg = line.clone();
+    let vol = settings.voice_volume;
+    thread::spawn(move || {
+        if let Err(err) = tts::speak_now(&line_bg, &voice_bg, vol) {
             app_log::write(&format!("test_speech FAILED: {err}"));
-            Err(err)
         }
-    }
+    });
+    Ok(format!("Speaking with {voice}: “{line}”…"))
 }
 
 #[tauri::command]
@@ -767,6 +770,9 @@ fn stop_monitoring(state: State<'_, Arc<AppState>>, app: AppHandle) -> EngineSta
 fn open_overlay(state: State<'_, Arc<AppState>>, app: AppHandle) -> Result<OverlayStatus, String> {
     create_overlay_window(&app)?;
     if let Some(win) = app.get_webview_window("overlay") {
+        // Windows can reintroduce the DWM glass outline when the window is shown;
+        // force shadow off again so the overlay stays borderless.
+        let _ = win.set_shadow(false);
         let _ = win.show();
         let _ = win.set_always_on_top(true);
         let _ = win.set_ignore_cursor_events(false);

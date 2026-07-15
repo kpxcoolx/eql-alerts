@@ -569,6 +569,7 @@ export default function App() {
   const [appVersion, setAppVersion] = useState("");
   const [pendingUpdate, setPendingUpdate] = useState<PendingUpdate | null>(null);
   const [updateBusy, setUpdateBusy] = useState(false);
+  const [triggersLoading, setTriggersLoading] = useState(true);
   const [showSettings, setShowSettings] = useState(false);
   const [showAddClass, setShowAddClass] = useState(false);
   const [inspecting, setInspecting] = useState(false);
@@ -631,7 +632,8 @@ export default function App() {
           });
         }
       })
-      .catch((err) => setError(String(err)));
+      .catch((err) => setError(String(err)))
+      .finally(() => setTriggersLoading(false));
 
     invoke<AppSettings>("get_settings")
       .then((s) => {
@@ -2048,61 +2050,72 @@ export default function App() {
                   <p className="main-sub">Configure when alerts are triggered.</p>
                 </div>
 
-                <div className="tools">
-                  <input
-                    className="search"
-                    type="search"
-                    title="Search triggers by name or pattern"
-                    placeholder="Search name or pattern…"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                  />
-                  <div className="filter-seg">
-                    {(
-                      [
-                        ["all", "All"],
-                        ["armed", "Armed"],
-                        ["off", "Off"],
-                      ] as const
-                    ).map(([mode, label]) => {
-                      let tip = "Show all trigger sets";
-                      if (mode === "armed") tip = "Show only armed sets";
-                      if (mode === "off") tip = "Show only disarmed sets";
-                      return (
-                      <button
-                        key={mode}
-                        type="button"
-                        className={`btn sm ${filter === mode ? "gold" : "ghost"}`}
-                        title={tip}
-                        onClick={() => setFilter(mode)}
-                      >
-                        {label}
-                      </button>
-                      );
-                    })}
-                  </div>
-                </div>
-
-                {visibleTree.length === 0 ? (
-                  <div className="empty">
-                    {library.groups.length === 0 ? (
-                      <>
-                        <p>No triggers loaded. Restore the built-in defaults to get started.</p>
-                        <button
-                          className="btn sm primary"
-                          type="button"
-                          title="Install the built-in EQL Essentials, classes, and raids pack"
-                          onClick={() => void restoreStarter()}
-                        >
-                          Restore default triggers
-                        </button>
-                      </>
-                    ) : (
-                      "Nothing matches that search."
-                    )}
+                {triggersLoading ? (
+                  <div className="empty loading-panel" aria-busy="true" aria-live="polite">
+                    <p>Loading triggers…</p>
+                    <div className="loading-bar" role="progressbar" aria-label="Loading triggers">
+                      <i />
+                    </div>
                   </div>
                 ) : (
-                  visibleTree.map((node) => renderRootSection(node))
+                  <>
+                    <div className="tools">
+                      <input
+                        className="search"
+                        type="search"
+                        title="Search triggers by name or pattern"
+                        placeholder="Search name or pattern…"
+                        value={query}
+                        onChange={(e) => setQuery(e.target.value)}
+                      />
+                      <div className="filter-seg">
+                        {(
+                          [
+                            ["all", "All"],
+                            ["armed", "Armed"],
+                            ["off", "Off"],
+                          ] as const
+                        ).map(([mode, label]) => {
+                          let tip = "Show all trigger sets";
+                          if (mode === "armed") tip = "Show only armed sets";
+                          if (mode === "off") tip = "Show only disarmed sets";
+                          return (
+                          <button
+                            key={mode}
+                            type="button"
+                            className={`btn sm ${filter === mode ? "gold" : "ghost"}`}
+                            title={tip}
+                            onClick={() => setFilter(mode)}
+                          >
+                            {label}
+                          </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+
+                    {visibleTree.length === 0 ? (
+                      <div className="empty">
+                        {library.groups.length === 0 ? (
+                          <>
+                            <p>No triggers loaded. Restore the built-in defaults to get started.</p>
+                            <button
+                              className="btn sm primary"
+                              type="button"
+                              title="Install the built-in EQL Essentials, classes, and raids pack"
+                              onClick={() => void restoreStarter()}
+                            >
+                              Restore default triggers
+                            </button>
+                          </>
+                        ) : (
+                          "Nothing matches that search."
+                        )}
+                      </div>
+                    ) : (
+                      visibleTree.map((node) => renderRootSection(node))
+                    )}
+                  </>
                 )}
               </>
             )}
