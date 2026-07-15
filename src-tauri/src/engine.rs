@@ -748,12 +748,32 @@ impl TriggerEngine {
         let mins: u64 = caps.get(2)?.as_str().parse().ok()?;
         let secs: u64 = caps.get(3)?.as_str().parse().ok()?;
         let remaining = mins.saturating_mul(60).saturating_add(secs);
-        if remaining == 0 {
-            return None;
-        }
 
         let timer_name = ability.to_string();
         let legacy_names = legacy_cooldown_names(ability);
+
+        // Ready (0 remaining): drop any stuck overlay timer for this ability.
+        if remaining == 0 {
+            let cleared: Vec<String> = self
+                .timers
+                .iter()
+                .filter(|t| {
+                    t.name == timer_name || legacy_names.iter().any(|n| t.name == *n)
+                })
+                .map(|t| t.id.clone())
+                .collect();
+            if cleared.is_empty() {
+                return None;
+            }
+            self.timers.retain(|t| !cleared.contains(&t.id));
+            return Some(MatchAction {
+                alert: None,
+                sound: None,
+                speak: None,
+                started_timer: None,
+                cleared_timer_ids: cleared,
+            });
+        }
 
         // Avoid spam updates when mash-firing the same remaining second.
         if let Some(existing) = self.timers.iter().find(|t| {
@@ -1412,6 +1432,24 @@ mod tests {
             + 999)
             / 1000;
         assert_eq!(left, 14 * 60 + 59);
+    }
+
+    #[test]
+    fn clears_ability_timer_when_cooldown_reports_ready() {
+        let mut engine = TriggerEngine::new(TriggerLibrary { groups: vec![] });
+        engine.process_action(
+            "You can use the ability Mend again in 1 minute(s) 8 seconds.",
+        );
+        assert_eq!(engine.snapshot().timers.len(), 1);
+        assert_eq!(engine.snapshot().timers[0].name, "Mend");
+
+        let cleared = engine.process_action(
+            "You can use the ability Mend again in 0 minute(s) 0 seconds.",
+        );
+        assert_eq!(cleared.len(), 1);
+        assert!(cleared[0].started_timer.is_none());
+        assert_eq!(cleared[0].cleared_timer_ids.len(), 1);
+        assert!(engine.snapshot().timers.is_empty());
     }
 
     fn flying_kick_trigger() -> Trigger {

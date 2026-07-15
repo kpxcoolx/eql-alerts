@@ -156,8 +156,8 @@ export default function Overlay() {
             <div className="empty-hint">
               Timers and alerts show here. Drag the title to move · Drag the
               corner to resize · Click-through to play through the overlay ·
-              Close to hide it · ⌘⇧U / Ctrl+Shift+U restores edit mode (×
-              dismisses a timer).
+              Close to hide it · ⌘⇧U / Ctrl+Shift+U restores edit mode · click
+              a timer to clear it.
             </div>
           ) : null}
           <div
@@ -211,8 +211,41 @@ export default function Overlay() {
           );
           const groupName = groupByTrigger.get(timer.trigger_id) ?? null;
           const iconSrc = resolveTimerIcon(timer.name, groupName);
+
+          function clearThisTimer() {
+            void invoke<EngineState>("clear_timer", {
+              timerId: timer.id,
+            })
+              .then(setEngine)
+              .catch(() => undefined);
+          }
+
           return (
-            <div className="timer" key={timer.id}>
+            <div
+              className={`timer${setupMode ? " dismissable" : ""}`}
+              key={timer.id}
+              role={setupMode ? "button" : undefined}
+              tabIndex={setupMode ? 0 : undefined}
+              title={setupMode ? "Click to clear this timer" : undefined}
+              onClick={
+                setupMode
+                  ? (e) => {
+                      if ((e.target as HTMLElement).closest("button")) return;
+                      clearThisTimer();
+                    }
+                  : undefined
+              }
+              onKeyDown={
+                setupMode
+                  ? (e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        clearThisTimer();
+                      }
+                    }
+                  : undefined
+              }
+            >
               <img className="row-icon" src={iconSrc} alt="" />
               <div className="timer-body">
                 <div className="timer-top">
@@ -223,12 +256,9 @@ export default function Overlay() {
                       type="button"
                       className="dismiss"
                       title="Clear this timer"
-                      onClick={() => {
-                        void invoke<EngineState>("clear_timer", {
-                          timerId: timer.id,
-                        })
-                          .then(setEngine)
-                          .catch(() => undefined);
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        clearThisTimer();
                       }}
                     >
                       ×

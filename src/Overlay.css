@@ -164,6 +164,15 @@ body,
     0 6px 16px rgba(0, 0, 0, 0.32);
 }
 
+.timer.dismissable {
+  cursor: pointer;
+}
+
+.timer.dismissable:hover {
+  border-color: rgba(224, 168, 74, 0.55);
+  background: rgba(28, 22, 16, 0.92);
+}
+
 .timer-body {
   flex: 1;
   min-width: 0;
