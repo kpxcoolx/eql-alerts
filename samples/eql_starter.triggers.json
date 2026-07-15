@@ -987,7 +987,7 @@
           "id": "591f6ecfedc9-0",
           "name": "Turning of the Unnatural",
           "enabled": true,
-          "search": "^([\\w -'`]+) staggers under the weight of divine words\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Turning of the Unnatural\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 96,
@@ -998,7 +998,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         }
       ]
     },
@@ -1452,7 +1452,7 @@
           "id": "fd6e31d460a4-0",
           "name": "Drones of Doom",
           "enabled": true,
-          "search": "^.+? is engulfed in a swarm.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Drones of Doom\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 60,
@@ -1463,13 +1463,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "fd6e31d460a4-1",
           "name": "Immolate",
           "enabled": true,
-          "search": "^([\\w -'`]+) is surrounded by blazing flames\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Immolate\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 66,
@@ -1480,13 +1480,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "fd6e31d460a4-2",
           "name": "Breath of Ro",
           "enabled": true,
-          "search": "^([\\w -'`]+) is immolated by blazing flames\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Breath of Ro\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 60,
@@ -1497,13 +1497,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "fd6e31d460a4-3",
           "name": "Winged Death",
           "enabled": true,
-          "search": "^([\\w -'`]+) is engulfed in a swarm of deadly insects\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Winged Death\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 60,
@@ -1514,13 +1514,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "fd6e31d460a4-4",
           "name": "Drifting Death",
           "enabled": true,
-          "search": "^([\\w -'`]+) is engulfed by a swarm.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Drifting Death\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 60,
@@ -1531,13 +1531,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "fd6e31d460a4-5",
           "name": "Wrath of Nature (Naturewalker's Scimitar)",
           "enabled": true,
-          "search": "^([\\w -'`]+) has been gripped by nature's wrath\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Wrath of Nature\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 180,
@@ -1548,7 +1548,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         }
       ]
     },
@@ -1910,7 +1910,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: Dazzle shares this land line — a recent Dazzle cast upgrades the timer to 96s"
+          "comments": "EQL: Dazzle shares this land line \u2014 a recent Dazzle cast upgrades the timer to 96s"
         },
         {
           "id": "a0a8628d752e-4",
@@ -2004,7 +2004,7 @@
           "id": "6935b0a8c747-0",
           "name": "Asphyxiate",
           "enabled": true,
-          "search": "^.+? begins to choke.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Asphyxiate\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 120,
@@ -2015,13 +2015,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "6935b0a8c747-1",
           "name": "Torment of Argli",
           "enabled": true,
-          "search": "^.+? screams from the Torment of Argli.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Torment of Argli\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 120,
@@ -2032,7 +2032,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         }
       ]
     },
@@ -2447,7 +2447,7 @@
           "id": "ad582541161e-0",
           "name": "Wrath of the Elements",
           "enabled": true,
-          "search": "^.+? is assaulted by the wrath of the elements\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Wrath of the Elements\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 30,
@@ -2459,7 +2459,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         }
       ]
     },
@@ -2532,7 +2532,7 @@
           "early_end": [],
           "sound": null,
           "speak": null,
-          "comments": "EQL base is 1m 30s (not classic 6m). Overlay also syncs from “You can use the ability … again in …” when you press early."
+          "comments": "EQL base is 1m 30s (not classic 6m). Overlay also syncs from \u201cYou can use the ability \u2026 again in \u2026\u201d when you press early."
         },
         {
           "id": "24fc739023d9-2",
@@ -3024,7 +3024,7 @@
           "id": "b9910186fb08-0",
           "name": "Vexing Mordinia",
           "enabled": true,
-          "search": "^([\\w -'`]+) staggers under the curse of Vexing Mordinia\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Vexing Mordinia\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 60,
@@ -3035,13 +3035,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-1",
           "name": "Cessation of Cor",
           "enabled": true,
-          "search": "^([\\w -'`]+)'s blood stills within their veins\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Cessation of Cor\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 60,
@@ -3052,7 +3052,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-2",
@@ -3069,7 +3069,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: match your land hit — feverish line is shared with Sicken/Scourge"
+          "comments": "EQL: match your land hit \u2014 feverish line is shared with Sicken/Scourge"
         },
         {
           "id": "b9910186fb08-3",
@@ -3092,7 +3092,7 @@
           "id": "b9910186fb08-4",
           "name": "Splurt",
           "enabled": true,
-          "search": "^([\\w -'`]+)'s body begins to splurt\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Splurt\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 102,
@@ -3103,13 +3103,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-5",
           "name": "Boil Blood",
           "enabled": true,
-          "search": "^([\\w -'`]+)'s blood boils\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Boil Blood\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 108,
@@ -3120,13 +3120,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-6",
           "name": "Vampiric Curse",
           "enabled": true,
-          "search": "^([\\w -'`]+) pales\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Vampiric Curse\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 54,
@@ -3137,7 +3137,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-7",
@@ -3159,7 +3159,7 @@
           "id": "b9910186fb08-8",
           "name": "Torment of Shadows (Scythe of the Shadowed Soul)",
           "enabled": true,
-          "search": "^([\\w -'`]+) is gripped by shadows of fear and terror\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Torment of Shadows\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 96,
@@ -3170,13 +3170,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-9",
           "name": "Asystole",
           "enabled": true,
-          "search": "^([\\w -'`]+) clutches their chest\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Asystole\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 72,
@@ -3187,13 +3187,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-10",
           "name": "Chilling Embrace",
           "enabled": true,
-          "search": "^([\\w -'`]+) is wracked by chilling poison\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Chilling Embrace\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 96,
@@ -3204,14 +3204,14 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-11",
           "name": "Bond of Death",
           "enabled": true,
-          "search": "^([\\w -'`]+) staggers\\.$",
-          "use_regex": false,
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Bond of Death\\.$",
+          "use_regex": true,
           "display_text": null,
           "timer_seconds": 54,
           "timer_name": "Bond of Death - ${1}",
@@ -3221,13 +3221,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "b9910186fb08-12",
           "name": "Pyrocuror",
           "enabled": true,
-          "search": "^([\\w -'`]+)'s blood ignites\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Pyrocuror\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 114,
@@ -3238,7 +3238,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         }
       ]
     },
@@ -3630,7 +3630,7 @@
           "sound": null,
           "speak": "Lay on Hands",
           "tts_enabled": true,
-          "comments": "EQL base is 15m at early ranks (not classic 72m). Overlay also syncs from “You can use the ability … again in …” when you press early."
+          "comments": "EQL base is 15m at early ranks (not classic 72m). Overlay also syncs from \u201cYou can use the ability \u2026 again in \u2026\u201d when you press early."
         }
       ]
     },
@@ -3923,7 +3923,7 @@
           "id": "28a22dbe055d-0",
           "name": "Drones of Doom",
           "enabled": true,
-          "search": "^([\\w -'`]+)is engulfed in a swarm\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Drones of Doom\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 60,
@@ -3934,13 +3934,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "28a22dbe055d-1",
           "name": "Immolate",
           "enabled": true,
-          "search": "^([\\w -'`]+) is surrounded by blazing flames\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Immolate\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 66,
@@ -3951,7 +3951,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         }
       ]
     },
@@ -4906,7 +4906,7 @@
           "id": "dc9fed12dd5a-0",
           "name": "Bane of Nife",
           "enabled": true,
-          "search": "^([\\w -'`]+) veins have been filled with deadly poison\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Bane of Nife\\.$",
           "use_regex": true,
           "display_text": "${1} Baned of Nifed",
           "timer_seconds": 45,
@@ -4917,13 +4917,13 @@
           ],
           "sound": null,
           "speak": "${1} Baned of Nifed",
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "dc9fed12dd5a-1",
           "name": "Curse of the Spirits (Spear of Fate)",
           "enabled": true,
-          "search": "^([\\w -'`]+) is consumed by the raging spirits of the land\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Curse of the Spirits\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 87,
@@ -4934,13 +4934,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "dc9fed12dd5a-2",
           "name": "Pox of Bertoxxulous",
           "enabled": true,
-          "search": "^([\\w -'`]+) skin erupts in purulent pustules\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of \\w+ damage by Pox of Bertoxxulous\\.$",
           "use_regex": true,
           "display_text": "${1} Pox of Bertoxed",
           "timer_seconds": 110,
@@ -4951,7 +4951,7 @@
           ],
           "sound": null,
           "speak": "${1} Pox of Bertoxed",
-          "comments": null
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
         },
         {
           "id": "dc9fed12dd5a-3",
@@ -4969,7 +4969,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: match your land hit — feverish line is shared with Sicken/Plague"
+          "comments": "EQL: match your land hit \u2014 feverish line is shared with Sicken/Plague"
         },
         {
           "id": "dc9fed12dd5a-4",

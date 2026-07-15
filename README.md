@@ -116,6 +116,20 @@ python3 scripts/eql_compat.py samples/eql_starter.triggers.json
 
 Existing installs auto-strip these timers once on next launch (`eql_compat_permanent_v1`). You can still use **Reset starter** for a clean pack.
 
+### Self-only combat clocks (not other players)
+
+Many classic land emotes are **zone-visible** (`X has been poisoned.`, `X yawns.`, `X has been mesmerized.`). Without filtering, every nearby caster’s spells light your overlay.
+
+EQL Alerts scopes those to **your** casts:
+
+| Kind | How |
+|------|-----|
+| **Damage Over Time** timers | Match `You hit <target> … by <Spell>.` (rewritten on load via `ensure_eql_disease_dot_timers`) |
+| **Crowd Control** (mez, etc.) | Land emote only arms if you recently `You begin casting` that spell (Dazzle still upgrades the shared mesmerize line) |
+| **Slowed / Maloed** warnings | Same cast gate — ignores party Drowsy / other malo lands |
+
+Restart the app after updates so migrations and engine cast-gating apply. Group buff trackers under `Buffs / Others` stay intentionally shared.
+
 ## Import GINA packs
 
 `GINA/gina_pack.gtp` converts into our trigger model (timers, text/TTS→toast, early-enders). Groups import **disabled** so you opt in like GINA. Permanent-buff timers are cleared during import.

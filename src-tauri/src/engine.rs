@@ -123,6 +123,7 @@ pub struct MatchAction {
 
 struct CompiledTrigger {
     group_id: String,
+    group_name: String,
     trigger: Trigger,
     group_enabled: bool,
     regex: Option<Regex>,
@@ -140,12 +141,82 @@ pub struct TriggerEngine {
     next_alert_id: u64,
     /// Suppress duplicate alert spam for the same trigger (melee range spam, etc.).
     last_fire_ms: HashMap<String, u64>,
-    /// EQL: Dazzle shares the Mesmerize land line — remember a recent cast.
-    pending_dazzle_ms: Option<u64>,
+    /// Recent "You begin casting …" names (normalized), for self-only land timers.
+    pending_casts: Vec<(String, u64)>,
 }
 
 /// Ignore a second fire of the same trigger within this window.
 const ALERT_DEBOUNCE_MS: u64 = 2_000;
+/// How long a "You begin casting" counts as yours for shared land-emote timers.
+const PENDING_CAST_MS: u64 = 8_000;
+
+/// Search already attributes the event to you (cast, your hit, character token).
+pub fn is_self_attributed_search(search: &str) -> bool {
+    let s = search.trim_start_matches('^');
+    s.starts_with("You ")
+        || s.starts_with("Your ")
+        || s.starts_with("(You ")
+        || search.contains("{C}")
+        || search.contains("from your ")
+}
+
+/// Spell name used in combat logs: strip clicky notes and slash alternates.
+pub fn spell_basename(name: &str) -> Option<String> {
+    let mut base = name.split(" (").next().unwrap_or(name).trim();
+    if let Some((before, _)) = base.split_once('/') {
+        base = before.trim();
+    }
+    if base.is_empty() || base.contains('[') || base.contains('|') {
+        return None;
+    }
+    Some(base.to_string())
+}
+
+fn normalize_spell_name(name: &str) -> String {
+    let mut s = name.trim().to_ascii_lowercase();
+    let romans = [
+        " xviii", " xvii", " xvi", " xv", " xiv", " xiii", " xii", " xi", " x", " ix",
+        " viii", " vii", " vi", " v", " iv", " iii", " ii", " i",
+    ];
+    for roman in romans {
+        if let Some(stripped) = s.strip_suffix(roman) {
+            s = stripped.to_string();
+            break;
+        }
+    }
+    s
+}
+
+/// Cast names that must have been started recently for shared land-emote triggers.
+fn required_recent_casts(compiled: &CompiledTrigger) -> Option<Vec<String>> {
+    match compiled.trigger.name.as_str() {
+        "Slowed" => Some(
+            [
+                "drowsy",
+                "walking sleep",
+                "tagar's insects",
+                "togor's insects",
+                "turgur's insects",
+            ]
+            .into_iter()
+            .map(str::to_string)
+            .collect(),
+        ),
+        "Maloed" => Some(
+            ["malo", "malosini", "malise", "malaisement", "malosi"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        ),
+        _ => {
+            let group = compiled.group_name.to_ascii_lowercase();
+            if !group.contains("crowd control") {
+                return None;
+            }
+            spell_basename(&compiled.trigger.name).map(|name| vec![name])
+        }
+    }
+}
 
 impl TriggerEngine {
     pub fn new(library: TriggerLibrary) -> Self {
@@ -159,7 +230,7 @@ impl TriggerEngine {
             timers: vec![],
             next_alert_id: 1,
             last_fire_ms: HashMap::new(),
-            pending_dazzle_ms: None,
+            pending_casts: Vec::new(),
         };
         engine.set_library(library);
         engine
@@ -405,6 +476,7 @@ impl TriggerEngine {
                 }
                 compiled.push(CompiledTrigger {
                     group_id: group.id.clone(),
+                    group_name: group.name.clone(),
                     trigger: trigger.clone(),
                     group_enabled: group.enabled,
                     regex,
@@ -413,6 +485,32 @@ impl TriggerEngine {
             }
         }
         self.compiled = compiled;
+    }
+
+    fn note_begin_casting(&mut self, action: &str, now: u64) {
+        let Some(rest) = action.strip_prefix("You begin casting ") else {
+            return;
+        };
+        let Some(name) = rest.strip_suffix('.') else {
+            return;
+        };
+        self.pending_casts
+            .retain(|(_, t)| now.saturating_sub(*t) < PENDING_CAST_MS);
+        self.pending_casts
+            .push((normalize_spell_name(name), now));
+    }
+
+    fn has_recent_cast(&self, spell: &str, now: u64) -> bool {
+        let want = normalize_spell_name(spell);
+        self.pending_casts.iter().any(|(name, t)| {
+            if now.saturating_sub(*t) >= PENDING_CAST_MS {
+                return false;
+            }
+            name == &want
+                || (want.starts_with("mesmerize")
+                    && (name == "dazzle" || name.starts_with("mesmerize")))
+                || (name.starts_with("mesmerize") && want.starts_with("mesmerize"))
+        })
     }
 
     /// Process one log action line (already stripped of timestamp).
@@ -428,10 +526,7 @@ impl TriggerEngine {
             actions.push(synced);
         }
 
-        // EQL: Dazzle land text is identical to Mesmerize — remember recent casts.
-        if action == "You begin casting Dazzle." {
-            self.pending_dazzle_ms = Some(now);
-        }
+        self.note_begin_casting(action, now);
 
         // Early-end pass: clear timers when end text matches.
         let mut cleared = Vec::new();
@@ -548,6 +643,18 @@ impl TriggerEngine {
                 continue;
             }
 
+            // Shared land emotes (mez, slow yawns, malo) — only fire if you cast.
+            if !is_self_attributed_search(&compiled.trigger.search) {
+                if let Some(spells) = required_recent_casts(compiled) {
+                    let mine = spells
+                        .iter()
+                        .any(|spell| self.has_recent_cast(spell, now));
+                    if !mine {
+                        continue;
+                    }
+                }
+            }
+
             // Debounce noisy combat spam (range / LOS while autoattacking).
             // Timer triggers still run so multi-mob mez clocks start; toast/TTS
             // for the same timer name is debounced after the name is known.
@@ -630,15 +737,12 @@ impl TriggerEngine {
                         .unwrap_or_else(|| compiled.trigger.name.clone());
 
                     // Dazzle shares "has been mesmerized" with Mesmerize on EQL.
-                    let dazzle_pending = self
-                        .pending_dazzle_ms
-                        .map(|t| now.saturating_sub(t) < 5_000)
-                        .unwrap_or(false);
+                    let dazzle_pending = self.has_recent_cast("dazzle", now);
                     let is_mesmerize_land = name_template.starts_with("Mesmerize");
                     if dazzle_pending && is_mesmerize_land {
                         secs = 96;
                         name_template = "Dazzle - ${1}".to_string();
-                        self.pending_dazzle_ms = None;
+                        self.pending_casts.retain(|(n, _)| n != "dazzle");
                     }
 
                     let timer_name = expand_tokens(
@@ -1233,7 +1337,7 @@ mod tests {
         let lib = TriggerLibrary {
             groups: vec![TriggerGroup {
                 id: "g".into(),
-                name: "G".into(),
+                name: "Classes / Enchanter / Crowd Control".into(),
                 enabled: true,
                 triggers: vec![
                     Trigger {
@@ -1279,6 +1383,84 @@ mod tests {
 
         engine.process_action("Your Dazzle spell has worn off.");
         assert!(engine.snapshot().timers.is_empty());
+    }
+
+    #[test]
+    fn slowed_ignores_other_players_drowsy_yawns() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "warn".into(),
+                name: "Classes / Shaman / Warnings".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "eql-shm-slow-landed".into(),
+                    name: "Slowed".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+)(?: yawns|'s motions slow as a plague of insects chews at their skin)\.$"
+                        .into(),
+                    use_regex: true,
+                    display_text: Some("${1} Slowed".into()),
+                    timer_seconds: None,
+                    timer_name: None,
+                    early_end: vec![],
+                    sound: None,
+                    speak: Some("${1} Slowed".into()),
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+
+        // Party Drowsy — shared yawns line must not alert.
+        assert!(engine
+            .process_action("a shin ghoul knight yawns.")
+            .is_empty());
+
+        engine.process_action("You begin casting Togor's Insects IV.");
+        let yours = engine.process_action("a vampire bat yawns.");
+        assert_eq!(yours.len(), 1);
+        assert_eq!(yours[0].alert.as_ref().map(|a| a.text.as_str()), Some("a vampire bat Slowed"));
+    }
+
+    #[test]
+    fn crowd_control_ignores_other_players_mez() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "cc".into(),
+                name: "Classes / Enchanter / Crowd Control".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "mez".into(),
+                    name: "Mesmerize/Mesmerization".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) has been mesmerized\.$".into(),
+                    use_regex: true,
+                    display_text: None,
+                    timer_seconds: Some(24),
+                    timer_name: Some("Mesmerize - ${1}".into()),
+                    early_end: vec![],
+                    sound: Some("none".into()),
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+
+        assert!(engine
+            .process_action("a shin ghoul knight has been mesmerized.")
+            .is_empty());
+        assert!(engine.snapshot().timers.is_empty());
+
+        engine.process_action("You begin casting Mesmerize IV.");
+        let yours = engine.process_action("a shin ghoul knight has been mesmerized.");
+        assert_eq!(yours.len(), 1);
+        assert_eq!(
+            yours[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Mesmerize - a shin ghoul knight")
+        );
     }
 
     #[test]

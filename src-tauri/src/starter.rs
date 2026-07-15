@@ -758,7 +758,7 @@ fn shaman_warning_triggers() -> Vec<Trigger> {
             Some("${1} Slowed"),
             Some("${1} Slowed"),
             None,
-            Some("Turgur's / Insects / Walking Sleep land, or Plague of Insects"),
+            Some("EQL: yawns is shared with others' Drowsy — engine only fires after your slow cast"),
         ),
         t_regex(
             "eql-shm-slow-resisted",
@@ -889,62 +889,37 @@ fn ensure_early_end(trigger: &mut Trigger, pattern: &str) {
 }
 
 /// Shared DoT emotes fire for any caster (you, pet, mob, other players).
-/// Rewrite to your land-hit line so a timer starts only when you land the DoT.
+/// Rewrite Damage Over Time timers to your land-hit line so clocks start only for you.
 pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
+        if !group
+            .name
+            .to_ascii_lowercase()
+            .contains("damage over time")
+        {
+            continue;
+        }
         for trigger in &mut group.triggers {
-            let before = serde_json::to_string(trigger).unwrap_or_default();
-            let name = trigger.name.as_str();
-            let uses_shared_fever =
-                trigger.search.contains("sweats and shivers, looking feverish");
-            let uses_shared_poison = trigger.search.contains("has been poisoned");
-
-            if name == "Scourge" && uses_shared_fever {
-                trigger.search =
-                    r"^You hit ([\w -'`]+) for \d+ points of disease damage by Scourge\.$"
-                        .into();
-                trigger.use_regex = true;
-                if trigger.comments.is_none() {
-                    trigger.comments = Some(
-                        "EQL: match your land hit — feverish line is shared with Sicken/Plague"
-                            .into(),
-                    );
-                }
-            } else if name == "Plague" && uses_shared_fever {
-                trigger.search =
-                    r"^You hit ([\w -'`]+) for \d+ points of disease damage by Plague\.$"
-                        .into();
-                trigger.use_regex = true;
-                if trigger.comments.is_none() {
-                    trigger.comments = Some(
-                        "EQL: match your land hit — feverish line is shared with Sicken/Scourge"
-                            .into(),
-                    );
-                }
-            } else if name == "Venom of the Snake" && uses_shared_poison {
-                trigger.search = r"^You hit ([\w -'`]+) for \d+ points of poison damage by Venom of the Snake\.$"
-                    .into();
-                trigger.use_regex = true;
-                if trigger.comments.is_none() {
-                    trigger.comments = Some(
-                        "EQL: match your land hit — poisoned line is shared with other poison DoTs"
-                            .into(),
-                    );
-                }
-            } else if name == "Envenomed Bolt" && uses_shared_poison {
-                trigger.search =
-                    r"^You hit ([\w -'`]+) for \d+ points of poison damage by Envenomed Bolt\.$"
-                        .into();
-                trigger.use_regex = true;
-                if trigger.comments.is_none() {
-                    trigger.comments = Some(
-                        "EQL: match your land hit — poisoned line is shared with other poison DoTs"
-                            .into(),
-                    );
-                }
+            if trigger.timer_seconds.unwrap_or(0) == 0 {
+                continue;
             }
-
+            if crate::engine::is_self_attributed_search(&trigger.search) {
+                continue;
+            }
+            let Some(spell) = crate::engine::spell_basename(&trigger.name) else {
+                continue;
+            };
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            let escaped = regex::escape(&spell);
+            trigger.search =
+                format!(r"^You hit ([\w -'`]+) for \d+ points of \w+ damage by {escaped}\.$");
+            trigger.use_regex = true;
+            if trigger.comments.is_none() {
+                trigger.comments = Some(
+                    "EQL: match your land hit — shared emotes fire for any caster".into(),
+                );
+            }
             let after = serde_json::to_string(trigger).unwrap_or_default();
             if before != after {
                 changed += 1;
