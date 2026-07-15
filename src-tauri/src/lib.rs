@@ -669,7 +669,8 @@ fn test_speech(
 
 #[tauri::command]
 fn list_kokoro_voices() -> Vec<kokoro::KokoroVoice> {
-    match kokoro::list_voices() {
+    // Never ensure_daemon/extract here — that freezes the Windows UI for minutes on first run.
+    match kokoro::list_voices_if_running() {
         Ok(v) if !v.is_empty() => v,
         _ => kokoro::fallback_voice_catalog(),
     }
@@ -719,11 +720,10 @@ fn preview_kokoro_voice(
 
 #[tauri::command]
 fn kokoro_status() -> serde_json::Value {
-    let ready = kokoro::is_available();
-    let daemon = kokoro::ensure_daemon().is_ok();
+    // Probe only — never extract or spawn from the UI invoke path.
     serde_json::json!({
-        "installed": ready,
-        "daemon": daemon,
+        "installed": kokoro::is_available(),
+        "daemon": kokoro::daemon_running(),
     })
 }
 

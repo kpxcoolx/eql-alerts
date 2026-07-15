@@ -18,6 +18,8 @@ use std::os::windows::process::CommandExt;
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 static DAEMON: Mutex<Option<Child>> = Mutex::new(None);
+/// Serialize first-run zip extract so UI/warm threads don't race.
+static EXTRACT_LOCK: Mutex<()> = Mutex::new(());
 
 const KOKORO_PORT: u16 = 17423;
 
@@ -175,14 +177,20 @@ fn helper_root() -> Result<PathBuf, String> {
     if extract_current(&extracted) {
         return Ok(extracted);
     }
+    // Local checkout ready without extract — no lock needed.
+    if let Some(ready) = find_ready_root() {
+        return Ok(ready);
+    }
+
+    let _guard = EXTRACT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // Another thread may have finished extracting while we waited.
+    if extract_current(&extracted) {
+        return Ok(extracted);
+    }
     // Packaged installer: (re)extract zip into LocalAppData so Python is writable & portable.
     if let Some(zip) = find_pack_zip() {
         extract_pack_zip(&zip, &extracted)?;
         return Ok(extracted);
-    }
-    // Local checkout: use the repo tts-kokoro from setup_kokoro.*
-    if let Some(ready) = find_ready_root() {
-        return Ok(ready);
     }
     Err(
         "Kokoro TTS not set up. Reinstall the app, or run scripts/setup_kokoro.sh (Mac) / scripts/setup_kokoro.bat (Windows)."
@@ -198,6 +206,20 @@ pub fn is_available() -> bool {
         return true;
     }
     find_ready_root().is_some()
+}
+
+/// True when the local daemon is already answering (does not extract or spawn).
+pub fn daemon_running() -> bool {
+    daemon_healthy()
+}
+
+/// Fetch voice catalog only if the daemon is already up — never blocks on extract/startup.
+pub fn list_voices_if_running() -> Result<Vec<KokoroVoice>, String> {
+    if !daemon_healthy() {
+        return Err("daemon not running".into());
+    }
+    let body = http_get("/voices", 2_000)?;
+    serde_json::from_str(&body).map_err(|e| format!("parse voices: {e}"))
 }
 
 fn http_get(path: &str, timeout_ms: u64) -> Result<String, String> {
@@ -343,10 +365,10 @@ pub fn ensure_daemon() -> Result<(), String> {
     Err("Kokoro daemon failed to start (timeout)".into())
 }
 
+/// Start daemon if needed, then return the live voice catalog.
 pub fn list_voices() -> Result<Vec<KokoroVoice>, String> {
     ensure_daemon()?;
-    let body = http_get("/voices", 30_000)?;
-    serde_json::from_str(&body).map_err(|e| format!("parse voices: {e}"))
+    list_voices_if_running()
 }
 
 #[derive(Debug, Deserialize)]
