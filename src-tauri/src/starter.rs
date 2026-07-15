@@ -489,21 +489,8 @@ fn is_gameplay_essentials(group: &TriggerGroup) -> bool {
     )
 }
 
-/// Always keep these off — they spam on every melee tick when armed.
-fn is_spammy_opt_in(trigger_id: &str) -> bool {
-    matches!(
-        trigger_id,
-        "eql-essentials-out-of-range"
-            | "eql-essentials-los"
-            | "eql-essentials-must-stand"
-            | "eql-essentials-encumbered"
-            | "eql-essentials-dispelled"
-            | "eql-essentials-invis-faded"
-    )
-}
-
-/// Insert or refresh built-in essentials categories.
-/// Core / Combat / Danger / Fades stay force-armed; Social stays opt-in.
+/// Insert missing built-in essentials categories / triggers.
+/// Existing user edits are kept; Restore defaults rewrites stock packs.
 pub fn ensure_essentials(library: &mut TriggerLibrary) -> usize {
     let fresh = essentials_groups();
     let mut changed = 0usize;
@@ -530,26 +517,13 @@ pub fn ensure_essentials(library: &mut TriggerLibrary) -> usize {
             }
 
             for trigger in &fresh_group.triggers {
-                if let Some(slot) = existing.triggers.iter_mut().find(|t| t.id == trigger.id) {
-                    let was_enabled = slot.enabled;
-                    let before = serde_json::to_string(slot).unwrap_or_default();
-                    *slot = trigger.clone();
-                    if is_spammy_opt_in(&trigger.id) {
-                        // Stay disarmed by default; keep TTS text ready if armed.
-                        slot.enabled = false;
-                        slot.tts_enabled = true;
-                    } else {
-                        // Keep the player's per-trigger on/off choice across routine refreshes.
-                        slot.enabled = was_enabled;
-                    }
-                    let after = serde_json::to_string(slot).unwrap_or_default();
-                    if before != after {
-                        changed += 1;
-                    }
-                } else {
-                    existing.triggers.push(trigger.clone());
-                    changed += 1;
+                if existing.triggers.iter().any(|t| t.id == trigger.id) {
+                    // Leave user edits alone (name, patterns, TTS, …).
+                    // Restore defaults is the path back to stock essentials.
+                    continue;
                 }
+                existing.triggers.push(trigger.clone());
+                changed += 1;
             }
         } else {
             changed += fresh_group.triggers.len();

@@ -107,7 +107,8 @@ export default function Overlay() {
   }
 
   const setupMode = !clickThrough;
-  const timers = engine?.timers ?? [];
+  // Hide as soon as ends_ms passes — backend prune only runs on log events / tick.
+  const timers = (engine?.timers ?? []).filter((t) => t.ends_ms > now);
   const hasContent = timers.length > 0 || toasts.length > 0 || modeHint;
 
   return (

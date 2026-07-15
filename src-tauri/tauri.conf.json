@@ -31,7 +31,7 @@
     "active": true,
     "targets": ["nsis", "dmg", "app"],
     "createUpdaterArtifacts": true,
-    "resources": ["sounds/*", "binaries/eql-speak"],
+    "resources": ["binaries/eql-speak"],
     "shortDescription": "Log triggers and overlays for EverQuest Legends",
     "longDescription": "Tails your EverQuest Legends character log and fires lightweight text, timer, and sound alerts — a modern, no-frills GINA-style engine.",
     "macOS": {

@@ -666,55 +666,13 @@ pub fn speak(text: &str, voice_id: &str, volume: f64) -> Result<(), String> {
     Ok(())
 }
 
-fn normalize_callout(text: &str) -> String {
-    let filtered: String = text
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c.is_whitespace() {
-                c
-            } else {
-                ' '
-            }
-        })
-        .collect();
-    filtered
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_lowercase()
-}
-
-fn bundled_callout_wav(text: &str, gender: VoiceGender) -> Option<PathBuf> {
-    let key = normalize_callout(text);
-    let base = match key.as_str() {
-        "out of mana" => "out-of-mana",
-        "low health" => "low-health",
-        "pet died" => "pet-died",
-        "fizzle" => "fizzle",
-        "interrupted" | "spell interrupted" => "interrupted",
-        "stunned" => "stunned",
-        "you died" => "you-died",
-        "alert test" => "alert-test",
-        _ => return None,
-    };
-
-    let file = match gender {
-        VoiceGender::Male => format!("{base}-male.wav"),
-        VoiceGender::Female => format!("{base}.wav"),
-    };
-
-    let mut candidates = vec![
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("sounds")
-            .join(&file),
-    ];
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            candidates.push(parent.join("sounds").join(&file));
-            candidates.push(parent.join("../Resources/sounds").join(&file));
-        }
+fn voice_gender_from_id(voice_id: &str) -> VoiceGender {
+    let id = voice_id.trim().to_ascii_lowercase();
+    if id.starts_with("am_") || id.starts_with("bm_") || id.contains("male") {
+        VoiceGender::Male
+    } else {
+        VoiceGender::Female
     }
-    candidates.into_iter().find(|p| p.exists())
 }
 
 fn eql_speak_bin() -> Option<PathBuf> {
@@ -768,15 +726,6 @@ fn copy_callout_to_cache(src: &Path) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
-fn voice_gender_from_id(voice_id: &str) -> VoiceGender {
-    let id = voice_id.trim().to_ascii_lowercase();
-    if id.starts_with("am_") || id.starts_with("bm_") || id.contains("male") {
-        VoiceGender::Male
-    } else {
-        VoiceGender::Female
-    }
-}
-
 fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String> {
     let volume = clamp_volume(volume);
     let voice_id = if voice_id.trim().is_empty() {
@@ -790,24 +739,6 @@ fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String>
         "speak_blocking start voice={voice_id} gender={} vol={volume:.2} text={text:?}",
         gender.as_str()
     ));
-
-    // Bundled combat callouts first — skip Kokoro entirely (interrupt/stun/oom…).
-    if let Some(wav) = bundled_callout_wav(text, gender) {
-        if SPEECH_GEN.load(Ordering::SeqCst) != ticket {
-            tts_log("speak cancelled before bundled play");
-            return Ok(());
-        }
-        tts_log(&format!("bundled callout {}", wav.display()));
-        // Prefer eql-speak so stop_speech can kill mid-clip when the next alert fires.
-        #[cfg(target_os = "macos")]
-        {
-            return play_file_helper(&wav, false, volume, true);
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            return play_file_tracked(&wav, false, volume, true);
-        }
-    }
 
     let cache_key = format!("{voice_id}\0{text}");
     if let Ok(guard) = speak_cache().lock() {
@@ -823,7 +754,7 @@ fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String>
         }
     }
 
-    // Prefer Kokoro neural TTS (Mac + Windows).
+    // Kokoro neural TTS only — selected voice always drives the callout.
     match crate::kokoro::synthesize_to_wav(text, voice_id, 1.15) {
         Ok(wav) => {
             if SPEECH_GEN.load(Ordering::SeqCst) != ticket {
@@ -875,55 +806,14 @@ fn speak_blocking(text: &str, voice_id: &str, volume: f64) -> Result<(), String>
             }
             return play;
         }
-        Err(err) => tts_log(&format!("kokoro unavailable, fallback: {err}")),
-    }
-
-    if SPEECH_GEN.load(Ordering::SeqCst) != ticket {
-        tts_log("speak cancelled before system TTS");
-        return Ok(());
-    }
-
-    #[cfg(target_os = "macos")]
-    {
-        let Some(bin) = eql_speak_bin() else {
-            return Err("TTS helpers missing (Kokoro + eql-speak)".into());
-        };
-        let vol = format!("{volume:.3}");
-
-        tts_log(&format!("live AVSpeech via helper {}", bin.display()));
-        // Fire-and-forget so SPEECH_LOCK is not held for the whole utterance.
-        let mut child = Command::new(&bin)
-            .args(["--volume", &vol, "--speak", text, gender.as_str()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("spawn eql-speak: {e}"))?;
-        let pid = child.id();
-        remember_pid(pid);
-        thread::spawn(move || {
-            let _ = child.wait();
-            if let Ok(mut guard) = LAST_SPEECH_PID.lock() {
-                if *guard == Some(pid) {
-                    *guard = None;
-                }
-            }
-        });
-        return Ok(());
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        return speak_windows_blocking(text, gender);
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let _ = (text, voice_id, volume);
-        Err("TTS is only wired for macOS and Windows".into())
+        Err(err) => {
+            tts_log(&format!("kokoro failed: {err}"));
+            Err(format!("Kokoro TTS failed: {err}"))
+        }
     }
 }
 
-/// Pre-synth non-bundled essentials so the first fight hit is cache-hot.
+/// Pre-synth essentials so the first fight hit is Kokoro cache-hot.
 pub fn warm_essential_callouts(voice_id: &str) {
     let voice_id = if voice_id.trim().is_empty() {
         "bf_isabella".to_string()
@@ -943,10 +833,6 @@ pub fn warm_essential_callouts(voice_id: &str) {
             "Did not take hold",
         ];
         for phrase in phrases {
-            let gender = voice_gender_from_id(&voice_id);
-            if bundled_callout_wav(phrase, gender).is_some() {
-                continue;
-            }
             let cache_key = format!("{voice_id}\0{phrase}");
             if let Ok(guard) = speak_cache().lock() {
                 if guard.get(&cache_key).is_some_and(|p| p.exists()) {
@@ -992,34 +878,6 @@ fn clear_pid() {
     if let Ok(mut guard) = LAST_SPEECH_PID.lock() {
         *guard = None;
     }
-}
-
-#[cfg(target_os = "windows")]
-fn speak_windows_blocking(text: &str, gender: VoiceGender) -> Result<(), String> {
-    let safe = text.replace('\'', "''");
-    let prefer = match gender {
-        VoiceGender::Female => "Zira",
-        VoiceGender::Male => "David",
-    };
-    let script = format!(
-        "Add-Type -AssemblyName System.Speech; \
-         $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; \
-         $s.Rate = 1; \
-         $s.Volume = 100; \
-         $voice = $s.GetInstalledVoices() | Where-Object {{ $_.VoiceInfo.Name -like '*{prefer}*' }} | Select-Object -First 1; \
-         if ($voice) {{ $s.SelectVoice($voice.VoiceInfo.Name) }}; \
-         $s.Speak('{safe}');"
-    );
-    let status = Command::new("powershell")
-        .args(["-NoProfile", "-Command", &script])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map_err(|e| format!("powershell TTS: {e}"))?;
-    if !status.success() {
-        return Err("Windows TTS failed".into());
-    }
-    Ok(())
 }
 
 pub fn play_alert(

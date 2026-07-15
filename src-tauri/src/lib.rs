@@ -26,7 +26,7 @@ pub fn tts_voice_male() -> VoiceGender {
     VoiceGender::Male
 }
 
-use engine::{EngineState, TriggerEngine, TriggerLibrary};
+use engine::{EngineState, Trigger, TriggerEngine, TriggerLibrary};
 use gina_import::{import_gina_package, merge_libraries};
 use log_find::{best_log, character_from_path, find_eq_logs, split_log_line, FoundLog};
 use log_tail::TailHandle;
@@ -80,6 +80,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
 use tauri::{
     AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, State, WebviewUrl,
     WebviewWindowBuilder, WindowEvent,
@@ -146,7 +148,7 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
         }
         settings.eql_tts_v1 = true;
     }
-    // Always refresh built-in OOM / pet-died / death / fizzle essentials.
+    // Fill in any missing essentials triggers; keep existing user edits.
     if ensure_essentials(&mut parsed) > 0 {
         dirty = true;
     }
@@ -586,6 +588,31 @@ fn clear_alerts(state: State<'_, Arc<AppState>>, app: AppHandle) -> EngineState 
 }
 
 #[tauri::command]
+fn test_trigger(
+    trigger: Trigger,
+    sample_action: Option<String>,
+    state: State<'_, Arc<AppState>>,
+    app: AppHandle,
+) -> Result<EngineState, String> {
+    let sample = sample_action
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    let action = {
+        let mut engine = state.engine.lock();
+        engine.test_fire(&trigger, sample)
+    };
+
+    let settings = load_settings(&app);
+    apply_audio_output(&settings);
+    let voice_id = active_voice_id(&settings);
+    let volume = settings.voice_volume;
+    let _ = tts::play_alert(action.sound.as_deref(), action.speak.as_deref(), &voice_id, volume);
+
+    Ok(emit_state(&state, &app))
+}
+
+#[tauri::command]
 fn speak_text(text: String, app: AppHandle) -> Result<(), String> {
     let settings = load_settings(&app);
     apply_audio_output(&settings);
@@ -894,6 +921,20 @@ pub fn run() {
                 tts::warm_essential_callouts(&warm_voice);
             });
 
+            // Prune finished timers on a schedule. Without this, overlay stays at
+            // 0s until the next log line (or clear) triggers emit_state.
+            if let Some(app_state) = app.try_state::<Arc<AppState>>() {
+                let tick_state = Arc::clone(app_state.inner());
+                let tick_app = handle.clone();
+                thread::spawn(move || loop {
+                    thread::sleep(Duration::from_millis(250));
+                    let removed = tick_state.engine.lock().prune_expired_timers();
+                    if removed {
+                        let _ = emit_state(&tick_state, &tick_app);
+                    }
+                });
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -912,6 +953,7 @@ pub fn run() {
             clear_timers,
             clear_timer,
             clear_alerts,
+            test_trigger,
             speak_text,
             test_speech,
             list_alert_sounds,

@@ -12,7 +12,7 @@ const STEPS: Step[] = [
   },
   {
     title: "Arm your class",
-    body: "EQL Essentials Core / Combat / Danger / Fades stay on (noisy triggers like range/LOS stay off inside them). Arm Social if you want invites. Tap your class under Your class. Under EQL Raids, arm the zone bosses you run.",
+    body: "EQL Essentials Core / Combat / Danger / Fades stay on (noisy triggers like range/LOS stay off inside them). Arm Social if you want invites. Tap your class under Your class. Under EQL Raids, arm the zone bosses you run. Add your own alerts under Custom.",
   },
   {
     title: "Open the overlay",

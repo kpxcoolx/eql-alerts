@@ -129,6 +129,8 @@ type ClassPack = {
   enabledCount: number;
 };
 
+const MAX_ARMED_CLASSES = 3;
+
 type Draft = {
   name: string;
   search: string;
@@ -208,17 +210,47 @@ function classAccent(name: string): string {
   return accents[name] ?? "#e0a84a";
 }
 
-function groupDescription(group: TriggerGroup): string {
+function groupBlurb(group: TriggerGroup): string | null {
+  const note = group.triggers.find((t) => t.comments)?.comments?.trim();
+  if (!note) return null;
+  return note;
+}
+
+function groupArmedStatus(group: TriggerGroup): string | null {
   const n = group.triggers.length;
-  const on = group.triggers.filter((t) => t.enabled).length;
-  const note = group.triggers.find((t) => t.comments)?.comments;
-  if (note) return note;
+  if (n === 0) return null;
+  // Group master switch must be on for triggers to fire — count effective armed.
+  let on = 0;
+  if (group.enabled) {
+    on = group.triggers.filter((t) => t.enabled).length;
+  }
   return `${on}/${n} triggers armed`;
 }
 
-function folderDescription(node: TreeNode): string {
+function folderArmedStatus(node: TreeNode): string | null {
   const s = nodeStats(node);
+  if (s.groups === 0) return null;
   return `${s.enabled}/${s.groups} sets · ${s.triggers} triggers`;
+}
+
+/** Armed triggers / total under a section (group must be on to count as armed). */
+function nodeTriggerArmedCounts(node: TreeNode): { armed: number; total: number } {
+  if (node.group) {
+    const total = node.group.triggers.length;
+    let armed = 0;
+    if (node.group.enabled) {
+      armed = node.group.triggers.filter((t) => t.enabled).length;
+    }
+    return { armed, total };
+  }
+  let armed = 0;
+  let total = 0;
+  for (const child of node.children) {
+    const s = nodeTriggerArmedCounts(child);
+    armed += s.armed;
+    total += s.total;
+  }
+  return { armed, total };
 }
 
 function formatTime(ms: number): string {
@@ -305,15 +337,29 @@ function buildTree(groups: TriggerGroup[]): TreeNode[] {
     for (const n of nodes) sortNodes(n.children);
   }
   sortNodes(root);
+  if (!root.some((n) => n.label === "Custom")) {
+    root.push({
+      key: "Custom",
+      label: "Custom",
+      children: [],
+      group: null,
+    });
+    sortNodes(root);
+  }
   return root;
 }
 
-/** Keep Essentials first, then Classes, then EQL Raids. */
+/** Essentials → Classes → Raids → Custom → everything else. */
 function rootRank(label: string): number {
   if (label === "EQL Essentials") return 0;
   if (label === "Classes") return 1;
   if (label === "EQL Raids") return 2;
-  return 3;
+  if (label === "Custom") return 3;
+  return 4;
+}
+
+function isCustomGroup(group: TriggerGroup): boolean {
+  return group.name === "Custom" || group.name.startsWith("Custom / ");
 }
 
 function nodeStats(node: TreeNode): { groups: number; enabled: number; triggers: number } {
@@ -417,12 +463,30 @@ function groupMatchesFilter(
 function filterTree(nodes: TreeNode[], query: string, filter: FilterMode): TreeNode[] {
   const out: TreeNode[] = [];
   for (const node of nodes) {
-    if (node.group) {
+    if (node.group && node.children.length === 0) {
       if (groupMatchesFilter(node.group, query, filter)) out.push(node);
       continue;
     }
     const kids = filterTree(node.children, query, filter);
-    if (kids.length > 0) out.push({ ...node, children: kids });
+    const selfMatch = node.group
+      ? groupMatchesFilter(node.group, query, filter)
+      : false;
+    if (selfMatch || kids.length > 0) {
+      out.push({
+        ...node,
+        children: kids,
+        group: selfMatch ? node.group : null,
+      });
+    } else if (
+      node.label === "Custom" &&
+      !query &&
+      filter === "all" &&
+      !node.group &&
+      node.children.length === 0
+    ) {
+      // Keep an empty Custom section so users can add their own triggers.
+      out.push(node);
+    }
   }
   return out;
 }
@@ -455,6 +519,34 @@ function triggerToDraft(t: Trigger): Draft {
   };
 }
 
+function draftToTrigger(id: string, draft: Draft): Trigger {
+  const timerRaw = draft.timer_seconds.trim();
+  let sound: string | null = null;
+  if (draft.sound.trim() && draft.sound !== "none") {
+    sound = draft.sound.trim();
+  } else if (!draft.tts_enabled) {
+    sound = "ping";
+  }
+  return {
+    id,
+    name: draft.name.trim() || "Untitled",
+    enabled: true,
+    search: draft.search,
+    use_regex: draft.use_regex,
+    display_text: draft.display_text.trim() || null,
+    timer_seconds: timerRaw === "" ? null : Number(timerRaw),
+    timer_name: draft.timer_name.trim() || null,
+    early_end: draft.early_end
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean),
+    sound,
+    speak: draft.speak.trim() || draft.display_text.trim() || draft.name,
+    tts_enabled: draft.tts_enabled,
+    comments: draft.comments.trim() || null,
+  };
+}
+
 export default function App() {
   const [library, setLibrary] = useState<TriggerLibrary>({ groups: [] });
   const [engine, setEngine] = useState<EngineState | null>(null);
@@ -479,9 +571,11 @@ export default function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [showAddClass, setShowAddClass] = useState(false);
   const [inspecting, setInspecting] = useState(false);
-  const [activityOpen, setActivityOpen] = useState(true);
   const [overlayOpen, setOverlayOpen] = useState(false);
+  const [pendingNameFocus, setPendingNameFocus] = useState(false);
   const voicePreviewTimer = useRef<number | null>(null);
+  const mainScrollRef = useRef<HTMLDivElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setNow(Date.now()), 250);
@@ -497,14 +591,34 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!inspecting) return;
+    const el = mainScrollRef.current;
+    if (!el) return;
+    el.scrollTop = 0;
+  }, [inspecting, selection?.groupId, selection?.triggerId]);
+
+  useEffect(() => {
+    if (!pendingNameFocus || !draft || !inspecting) return;
+    setPendingNameFocus(false);
+    window.requestAnimationFrame(() => {
+      const el = nameInputRef.current;
+      if (!el) return;
+      el.focus();
+      el.select();
+    });
+  }, [pendingNameFocus, draft, inspecting, selection?.triggerId]);
+
+  useEffect(() => {
     invoke<TriggerLibrary>("get_triggers")
       .then((lib) => {
         setLibrary(lib);
         const tree = buildTree(lib.groups);
         const nextExpanded: Record<string, boolean> = {};
         for (const node of tree) {
-          if (node.label === "EQL Essentials" || node.label === "Classes") {
+          if (node.label === "EQL Essentials" || node.label === "Custom") {
             nextExpanded[node.key] = true;
+          } else if (node.label === "Classes" || node.label === "EQL Raids") {
+            nextExpanded[node.key] = false;
           }
         }
         setExpanded(nextExpanded);
@@ -674,8 +788,20 @@ export default function App() {
   }
 
   function toggleClassPack(pack: ClassPack) {
-    const allOn = pack.enabledCount === pack.groupIds.length;
-    setGroupsEnabled(pack.groupIds, !allOn);
+    const allOn =
+      pack.enabledCount === pack.groupIds.length && pack.groupIds.length > 0;
+    if (allOn) {
+      setGroupsEnabled(pack.groupIds, false);
+      return;
+    }
+    const alreadyArmed = pack.enabledCount > 0;
+    if (!alreadyArmed && armedPacks.length >= MAX_ARMED_CLASSES) {
+      setError(
+        `You can arm up to ${MAX_ARMED_CLASSES} classes at a time. Disarm one first.`
+      );
+      return;
+    }
+    setGroupsEnabled(pack.groupIds, true);
   }
 
   function selectTrigger(groupId: string, triggerId: string) {
@@ -838,21 +964,33 @@ export default function App() {
     setError(null);
     if (
       !window.confirm(
-        "Replace your trigger library with the built-in EQL starter (Essentials + classes + classic EQL Raids)? Your custom edits will be overwritten."
+        "Replace built-in triggers with EQL defaults (Essentials + classes + classic EQL Raids)? Your Custom sets are kept; edits to built-in sets are overwritten."
       )
     ) {
       return;
     }
     try {
+      const customGroups = library.groups.filter(isCustomGroup);
       const result = await invoke<{
         library: TriggerLibrary;
         groups: number;
         triggers: number;
       }>("install_starter_pack");
-      setLibrary(result.library);
-      setExpanded({});
+      const merged: TriggerLibrary = {
+        groups: [...result.library.groups, ...customGroups],
+      };
+      if (customGroups.length > 0) {
+        await persist(merged);
+      } else {
+        setLibrary(result.library);
+      }
+      setExpanded({ Custom: true });
+      const kept =
+        customGroups.length > 0
+          ? ` Kept ${customGroups.length} custom set${customGroups.length === 1 ? "" : "s"}.`
+          : "";
       setNote(
-        `Starter installed — ${result.groups} groups / ${result.triggers} triggers. Arm your class chip; open EQL Raids for zone bosses.`
+        `Defaults restored — ${result.groups} groups / ${result.triggers} triggers.${kept} Arm your class chip; open EQL Raids for zone bosses.`
       );
     } catch (err) {
       setError(String(err));
@@ -864,9 +1002,22 @@ export default function App() {
     setDraftDirty(true);
   }
 
+  /** Rename trigger; keep Speak in sync when it still matches the old name. */
+  function patchTriggerName(name: string) {
+    setDraft((prev) => {
+      if (!prev) return prev;
+      const next: Draft = { ...prev, name };
+      if (prev.speak === prev.name) {
+        next.speak = name;
+      }
+      return next;
+    });
+    setDraftDirty(true);
+  }
+
   function saveDraft() {
     if (!selected || !draft) return;
-    const timerRaw = draft.timer_seconds.trim();
+    const next = draftToTrigger(selected.trigger.id, draft);
     void persist({
       groups: library.groups.map((group) => {
         if (group.id !== selected.group.id) return group;
@@ -874,33 +1025,35 @@ export default function App() {
           ...group,
           triggers: group.triggers.map((trigger) => {
             if (trigger.id !== selected.trigger.id) return trigger;
-            return {
-              ...trigger,
-              name: draft.name.trim() || "Untitled",
-              search: draft.search,
-              use_regex: draft.use_regex,
-              display_text: draft.display_text.trim() || null,
-              timer_seconds: timerRaw === "" ? null : Number(timerRaw),
-              timer_name: draft.timer_name.trim() || null,
-              early_end: draft.early_end
-                .split("\n")
-                .map((s) => s.trim())
-                .filter(Boolean),
-              sound:
-                draft.sound.trim() && draft.sound !== "none"
-                  ? draft.sound.trim()
-                  : draft.tts_enabled
-                    ? null
-                    : "ping",
-              speak: draft.speak.trim() || draft.display_text.trim() || draft.name,
-              tts_enabled: draft.tts_enabled,
-              comments: draft.comments.trim() || null,
-            };
+            return next;
           }),
         };
       }),
     });
     setDraftDirty(false);
+  }
+
+  async function fireInOverlay() {
+    if (!selected || !draft) return;
+    setError(null);
+    try {
+      await invoke("open_overlay");
+      setOverlayOpen(true);
+      const sample = tryLine.trim() ? actionFromLogLine(tryLine) : null;
+      const next = await invoke<EngineState>("test_trigger", {
+        trigger: draftToTrigger(selected.trigger.id, draft),
+        sampleAction: sample,
+      });
+      setEngine(next);
+      setNote(
+        sample
+          ? "Fired in overlay using your try line."
+          : "Fired in overlay. Paste a log line above to expand ${1} / {S}."
+      );
+    } catch (err) {
+      setError(`Overlay test failed: ${String(err)}`);
+      setNote(null);
+    }
   }
 
   function deleteSelected() {
@@ -932,22 +1085,74 @@ export default function App() {
     });
     setSelection({ groupId: selected.group.id, triggerId: trigger.id });
     setInspecting(true);
+    setPendingNameFocus(true);
   }
 
-  function addGroup() {
-    const group: TriggerGroup = {
-      id: newId(),
-      name: "Custom / New set",
-      enabled: true,
-      triggers: [emptyTrigger()],
-    };
-    void persist({ groups: [...library.groups, group] });
-    setSelection({ groupId: group.id, triggerId: group.triggers[0].id });
+  function addCustomTrigger() {
+    const trigger = emptyTrigger();
+    const existing = library.groups.find((g) => g.name === "Custom");
+    if (existing) {
+      void persist({
+        groups: library.groups.map((group) => {
+          if (group.id !== existing.id) return group;
+          return { ...group, triggers: [...group.triggers, trigger] };
+        }),
+      });
+      setSelection({ groupId: existing.id, triggerId: trigger.id });
+    } else {
+      const group: TriggerGroup = {
+        id: newId(),
+        name: "Custom",
+        enabled: true,
+        triggers: [trigger],
+      };
+      void persist({ groups: [...library.groups, group] });
+      setSelection({ groupId: group.id, triggerId: trigger.id });
+    }
+    setExpanded((prev) => ({ ...prev, Custom: true }));
     setInspecting(true);
+    setShowSettings(false);
+    setPendingNameFocus(true);
+  }
+
+  function deleteCustomGroup(groupId: string) {
+    const group = library.groups.find((g) => g.id === groupId);
+    if (!group || !isCustomGroup(group) || group.name === "Custom") return;
+    if (
+      !window.confirm(
+        `Delete custom set “${group.name.replace(/^Custom \/ /, "")}” and all its triggers?`
+      )
+    ) {
+      return;
+    }
+    void persist({
+      groups: library.groups.filter((g) => g.id !== groupId),
+    });
+    if (selection?.groupId === groupId) {
+      setSelection(null);
+      setInspecting(false);
+    }
   }
 
   function toggleExpand(key: string) {
     setExpanded((e) => ({ ...e, [key]: !e[key] }));
+  }
+
+  function focusClassInTriggers(className: string) {
+    setInspecting(false);
+    setShowSettings(false);
+    const classKey = `Classes / ${className}`;
+    setExpanded((prev) => ({
+      ...prev,
+      Classes: true,
+      [classKey]: true,
+    }));
+    window.requestAnimationFrame(() => {
+      const el = document.querySelector(`[data-tree-key="${CSS.escape(classKey)}"]`);
+      if (el instanceof HTMLElement) {
+        el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      }
+    });
   }
 
   function setTriggerEnabled(groupId: string, triggerId: string, enabled: boolean) {
@@ -1018,24 +1223,29 @@ export default function App() {
                 : undefined
             }
             aria-label={trigger.enabled ? "Disable trigger" : "Enable trigger"}
+            title={trigger.enabled ? "Disable this trigger" : "Enable this trigger"}
             onClick={(e) => {
               e.stopPropagation();
               setTriggerEnabled(group.id, trigger.id, !trigger.enabled);
             }}
           />
           <div className="body">
-            <div className="title">{trigger.name}</div>
-            <div className="tags">
-              {trigger.timer_seconds ? (
-                <span className="tag timer">
-                  {formatCountdown(trigger.timer_seconds)}
-                </span>
-              ) : null}
-              {trigger.tts_enabled !== false ? (
-                <span className="tag">TTS</span>
-              ) : (
-                <span className="tag">SFX</span>
-              )}
+            <div className="title-row">
+              <div className="title">{trigger.name}</div>
+              <div className="tags">
+                {trigger.timer_seconds ? (
+                  <span className="tag timer">
+                    {formatCountdown(trigger.timer_seconds)}
+                  </span>
+                ) : (
+                  <span className="tag timer empty" aria-hidden />
+                )}
+                {trigger.tts_enabled !== false ? (
+                  <span className="tag">TTS</span>
+                ) : (
+                  <span className="tag">SFX</span>
+                )}
+              </div>
             </div>
             <span className="pattern">
               {trigger.search || "(empty pattern)"}
@@ -1049,8 +1259,12 @@ export default function App() {
   function renderGroupRow(node: TreeNode): ReactNode {
     if (!node.group) return null;
     const group = node.group;
-    const isOpen = expanded[node.key] === true;
+    const searching = query.trim().length > 0;
+    const isOpen = searching || expanded[node.key] === true;
     const accent = rowAccent(node);
+    const blurb = groupBlurb(group);
+    const armed = groupArmedStatus(group);
+    const custom = isCustomGroup(group);
     return (
       <div key={node.key}>
         <div
@@ -1091,9 +1305,25 @@ export default function App() {
               }
             }}
           >
-            <div className="title">{node.label}</div>
-            <div className="desc">{groupDescription(group)}</div>
+            <div className="title-line">
+              <span className="title">{node.label}</span>
+              {blurb ? <span className="blurb">: {blurb}</span> : null}
+            </div>
+            {armed ? <div className="desc">{armed}</div> : null}
           </div>
+          {custom ? (
+            <button
+              type="button"
+              className="btn ghost sm custom-delete-set"
+              title="Delete this custom set"
+              onClick={(e) => {
+                e.stopPropagation();
+                deleteCustomGroup(group.id);
+              }}
+            >
+              Delete
+            </button>
+          ) : null}
           <button
             type="button"
             className={`switch ${group.enabled ? "on" : ""}`}
@@ -1103,6 +1333,7 @@ export default function App() {
                 : undefined
             }
             aria-label={group.enabled ? "Disarm set" : "Arm set"}
+            title={group.enabled ? "Disarm this set" : "Arm this set"}
             onClick={(e) => {
               e.stopPropagation();
               setGroupsEnabled([group.id], !group.enabled);
@@ -1130,12 +1361,14 @@ export default function App() {
 
   function renderFolderRows(node: TreeNode): ReactNode {
     if (node.group) return renderGroupRow(node);
-    const isOpen = expanded[node.key] === true;
+    const searching = query.trim().length > 0;
+    const isOpen = searching || expanded[node.key] === true;
     const statsNode = nodeStats(node);
     const allOn = statsNode.enabled === statsNode.groups && statsNode.groups > 0;
     const accent = rowAccent(node);
+    const armed = folderArmedStatus(node);
     return (
-      <div key={node.key}>
+      <div key={node.key} data-tree-key={node.key}>
         <div
           className="trigger-row"
           style={
@@ -1164,8 +1397,10 @@ export default function App() {
               }
             }}
           >
-            <div className="title">{node.label}</div>
-            <div className="desc">{folderDescription(node)}</div>
+            <div className="title-line">
+              <span className="title">{node.label}</span>
+            </div>
+            {armed ? <div className="desc">{armed}</div> : null}
           </div>
           <button
             type="button"
@@ -1176,6 +1411,7 @@ export default function App() {
                 : undefined
             }
             aria-label={allOn ? "Disarm folder" : "Arm folder"}
+            title={allOn ? "Disarm all sets in this folder" : "Arm all sets in this folder"}
             onClick={(e) => {
               e.stopPropagation();
               setGroupsEnabled(collectGroupIds(node), !allOn);
@@ -1200,12 +1436,27 @@ export default function App() {
   }
 
   function renderRootSection(node: TreeNode): ReactNode {
-    const isOpen = expanded[node.key] !== false;
+    const searching = query.trim().length > 0;
+    const isCustom = node.label === "Custom";
+    let isOpen = false;
+    if (searching) {
+      isOpen = true;
+    } else if (node.label === "EQL Essentials" || isCustom) {
+      isOpen = expanded[node.key] !== false;
+    } else {
+      isOpen = expanded[node.key] === true;
+    }
+    const customHasLeaves = !!(node.group && node.group.triggers.length > 0);
+    const customEmpty =
+      isCustom && !customHasLeaves && node.children.length === 0;
+    const fullNode = tree.find((n) => n.key === node.key) ?? node;
+    const counts = nodeTriggerArmedCounts(fullNode);
     return (
       <section className="trigger-group" key={node.key}>
         <button
           type="button"
           className="trigger-group-head"
+          title={isOpen ? `Collapse ${node.label}` : `Expand ${node.label}`}
           onClick={() =>
             setExpanded((e) => ({
               ...e,
@@ -1215,13 +1466,61 @@ export default function App() {
         >
           <span>{node.label}</span>
           <span className="grow" />
+          {counts.total > 0 ? (
+            <span
+              className="trigger-group-count"
+              title={`${counts.armed} of ${counts.total} triggers armed`}
+            >
+              {counts.armed}/{counts.total}
+            </span>
+          ) : null}
           <span className="chev">{isOpen ? "▴" : "▾"}</span>
         </button>
         {isOpen ? (
           <div className="trigger-group-body">
-            {node.group
-              ? renderGroupRow(node)
-              : node.children.map((child) => renderFolderRows(child))}
+            {isCustom ? (
+              <>
+                {customEmpty ? (
+                  <div className="custom-empty">
+                    <p>
+                      Add your own log-line triggers here — patterns, timers, and
+                      TTS.
+                    </p>
+                    <button
+                      type="button"
+                      className="btn sm primary"
+                      title="Create a custom trigger"
+                      onClick={addCustomTrigger}
+                    >
+                      Add custom trigger
+                    </button>
+                  </div>
+                ) : (
+                  <>
+                    {node.group ? (
+                      <div className="custom-leaves">
+                        {renderTriggerLeaves(node.group)}
+                      </div>
+                    ) : null}
+                    {node.children.map((child) => renderFolderRows(child))}
+                    <div className="custom-add-row">
+                      <button
+                        type="button"
+                        className="btn sm primary"
+                        title="Create a custom trigger"
+                        onClick={addCustomTrigger}
+                      >
+                        Add custom trigger
+                      </button>
+                    </div>
+                  </>
+                )}
+              </>
+            ) : node.group ? (
+              renderGroupRow(node)
+            ) : (
+              node.children.map((child) => renderFolderRows(child))
+            )}
           </div>
         ) : null}
       </section>
@@ -1230,6 +1529,7 @@ export default function App() {
 
   const live = !!engine?.monitoring;
   const armedPacks = classPacks.filter((p) => p.enabledCount > 0);
+  const activeTimers = (engine?.timers ?? []).filter((t) => t.ends_ms > now);
 
   return (
     <div className="app">
@@ -1252,19 +1552,6 @@ export default function App() {
             <span className="brand-version">v{appVersion}</span>
           ) : null}
         </div>
-        <div className="topbar-spacer" />
-        <button
-          type="button"
-          className={`icon-btn ${showSettings ? "on" : ""}`}
-          title="Settings"
-          aria-label="Settings"
-          onClick={() => setShowSettings(true)}
-        >
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-            <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
-            <path d="M19.4 13a7.8 7.8 0 0 0 .1-2l2-1.2-2-3.4-2.3.7a7.6 7.6 0 0 0-1.7-1L15 3.5h-6l-.5 2.6a7.6 7.6 0 0 0-1.7 1L4.5 6.4l-2 3.4 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.4 2.3-.7a7.6 7.6 0 0 0 1.7 1l.5 2.6h6l.5-2.6a7.6 7.6 0 0 0 1.7-1l2.3.7 2-3.4-2-1.2Z" />
-          </svg>
-        </button>
       </header>
 
       {pendingUpdate ? (
@@ -1277,6 +1564,7 @@ export default function App() {
             type="button"
             className="btn gold"
             disabled={updateBusy}
+            title="Download and install the available update"
             onClick={() => void runInstallUpdate()}
           >
             {updateBusy ? "Updating…" : "Install update"}
@@ -1285,6 +1573,7 @@ export default function App() {
             type="button"
             className="btn"
             disabled={updateBusy}
+            title="Open release notes in your browser"
             onClick={() => void openLatestReleasePage()}
           >
             Release notes
@@ -1295,7 +1584,12 @@ export default function App() {
       {error ? (
         <div className="banner error">
           <span className="grow">{error}</span>
-          <button className="btn sm ghost" type="button" onClick={() => setError(null)}>
+          <button
+            className="btn sm ghost"
+            type="button"
+            title="Dismiss this error"
+            onClick={() => setError(null)}
+          >
             Dismiss
           </button>
         </div>
@@ -1303,7 +1597,12 @@ export default function App() {
       {!error && note ? (
         <div className="banner info">
           <span className="grow">{note}</span>
-          <button className="btn sm ghost" type="button" onClick={() => setNote(null)}>
+          <button
+            className="btn sm ghost"
+            type="button"
+            title="Dismiss this message"
+            onClick={() => setNote(null)}
+          >
             Got it
           </button>
         </div>
@@ -1320,7 +1619,7 @@ export default function App() {
                   No classes armed yet. Use + Add class to arm your pack.
                 </div>
               ) : (
-                armedPacks.map((pack) => {
+                armedPacks.slice(0, MAX_ARMED_CLASSES).map((pack) => {
                   const on =
                     pack.enabledCount === pack.groupIds.length &&
                     pack.groupIds.length > 0;
@@ -1337,8 +1636,8 @@ export default function App() {
                           "--chip-accent": classAccent(pack.name),
                         } as CSSProperties
                       }
-                      title={`${pack.enabledCount}/${pack.groupIds.length} sets — click to disarm`}
-                      onClick={() => toggleClassPack(pack)}
+                      title={`Open ${pack.name} triggers`}
+                      onClick={() => focusClassInTriggers(pack.name)}
                     >
                       <img
                         src={classIconUrl(pack.name)}
@@ -1355,14 +1654,137 @@ export default function App() {
                 })
               )}
             </div>
-            <div className="sidebar-spacer" />
             <button
               type="button"
               className="sidebar-add"
+              title="Arm another class pack (up to 3)"
               onClick={() => setShowAddClass(true)}
             >
               + Add class
             </button>
+
+            <div className="sidebar-tools">
+              <div className="sidebar-label">Tools</div>
+              <button
+                className={`sidebar-tool-btn ${overlayOpen ? "" : "accent"}`}
+                type="button"
+                title={
+                  overlayOpen
+                    ? "Hide the always-on-top timer and toast overlay"
+                    : "Open the always-on-top timer and toast overlay"
+                }
+                onClick={() =>
+                  void invoke(overlayOpen ? "close_overlay" : "open_overlay")
+                }
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <rect x="3" y="5" width="18" height="14" rx="2" />
+                  <path d="M8 19v2M16 19v2M3 10h18" />
+                </svg>
+                {overlayOpen ? "Close overlay" : "Overlay"}
+              </button>
+              <button
+                className={`sidebar-tool-btn ${showSettings ? "accent" : ""}`}
+                type="button"
+                title="Settings"
+                onClick={() => setShowSettings(true)}
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" />
+                  <path d="M19.4 13a7.8 7.8 0 0 0 .1-2l2-1.2-2-3.4-2.3.7a7.6 7.6 0 0 0-1.7-1L15 3.5h-6l-.5 2.6a7.6 7.6 0 0 0-1.7 1L4.5 6.4l-2 3.4 2 1.2a7.8 7.8 0 0 0 0 2l-2 1.2 2 3.4 2.3-.7a7.6 7.6 0 0 0 1.7 1l.5 2.6h6l.5-2.6a7.6 7.6 0 0 0 1.7-1l2.3.7 2-3.4-2-1.2Z" />
+                </svg>
+                Settings
+              </button>
+            </div>
+
+            <section className="sidebar-activity">
+              <div className="sidebar-activity-head">
+                <div className="sidebar-label">Activity</div>
+                <button
+                  className="btn sm"
+                  type="button"
+                  title="Clear recent fired alerts and running timers"
+                  onClick={() => void clearAlerts()}
+                >
+                  Clear
+                </button>
+              </div>
+              <div className="sidebar-activity-body">
+                  <div className="activity-col">
+                    <h4>Timers</h4>
+                    {activeTimers.length === 0 ? (
+                      <div className="quiet">No running timers</div>
+                    ) : (
+                      activeTimers.map((timer) => {
+                        const left = remainingSecs(timer, now);
+                        const pct = Math.max(
+                          0,
+                          Math.min(
+                            100,
+                            ((timer.ends_ms - now) / (timer.duration_secs * 1000)) * 100
+                          )
+                        );
+                        return (
+                          <div className="timer" key={timer.id}>
+                            <div className="t-head">
+                              <div className="t-name">{timer.name}</div>
+                              <button
+                                type="button"
+                                className="timer-dismiss"
+                                title="Clear this timer"
+                                onClick={() => {
+                                  void invoke<EngineState>("clear_timer", {
+                                    timerId: timer.id,
+                                  })
+                                    .then(setEngine)
+                                    .catch((err) => setError(String(err)));
+                                }}
+                              >
+                                ×
+                              </button>
+                            </div>
+                            <div className="bar">
+                              <i style={{ width: `${pct}%` }} />
+                            </div>
+                            <div className="left">{formatCountdown(left)}</div>
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                  <div className="activity-col">
+                    <h4>Fired</h4>
+                    {(engine?.recent_alerts.length ?? 0) === 0 ? (
+                      <div className="quiet">Waiting for matches on the live log</div>
+                    ) : (
+                      engine!.recent_alerts.map((alert, i) => {
+                        const showFrom =
+                          alert.trigger_name.trim() !== "" &&
+                          alert.trigger_name !== alert.text;
+                        return (
+                          <div
+                            className={`event ${i === 0 ? "fresh" : ""}`}
+                            key={alert.id}
+                            title={`${alert.trigger_name} · ${alert.kind}`}
+                          >
+                            <div className="meta">
+                              <span className="when">
+                                {formatTime(alert.at_ms)}
+                              </span>
+                              <span className="kind">{alert.kind}</span>
+                            </div>
+                            <div className="text">{alert.text}</div>
+                            {showFrom ? (
+                              <div className="from">{alert.trigger_name}</div>
+                            ) : null}
+                          </div>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+            </section>
+
             <div className={`sidebar-status ${live ? "live" : ""}`} title={engine?.log_path ?? ""}>
               <span className="dot" />
               {live
@@ -1373,251 +1795,263 @@ export default function App() {
         </aside>
 
         <main className="main">
-          <div className="main-scroll">
+          <div className="main-scroll" ref={mainScrollRef}>
             {inspecting && selected && draft ? (
               <div className="inspector">
-                <div className="detail-bar">
-                  <button
-                    type="button"
-                    className="btn ghost sm"
-                    onClick={() => setInspecting(false)}
-                  >
-                    ← Triggers
-                  </button>
-                  <h2>{draft.name || "Untitled"}</h2>
-                  <span className="grow" />
-                  <button className="btn sm" type="button" onClick={addSibling}>
-                    Add trigger
-                  </button>
-                </div>
-                <p className="path">{selected.group.name}</p>
-
-                <div className="try">
-                  <label>Try a log line</label>
-                  <textarea
-                    placeholder="Paste a line from eqlog_*.txt to verify this pattern"
-                    value={tryLine}
-                    onChange={(e) => setTryLine(e.target.value)}
-                  />
-                  {tryResult ? (
-                    <div className={`try-result ${tryResult.hit ? "hit" : "miss"}`}>
-                      {tryResult.hit
-                        ? "Would fire on that line"
-                        : "No match — adjust the pattern"}
-                    </div>
-                  ) : (
-                    <div className="try-result">
-                      Strips the [timestamp] automatically, same as the live engine.
-                    </div>
-                  )}
-                </div>
-
-                <div className="field">
-                  <span>Name</span>
-                  <input
-                    type="text"
-                    value={draft.name}
-                    onChange={(e) => patchDraft({ name: e.target.value })}
-                  />
-                </div>
-                <div className="field">
-                  <span>Pattern</span>
-                  <textarea
-                    value={draft.search}
-                    onChange={(e) => patchDraft({ search: e.target.value })}
-                  />
-                </div>
-                <label className="check">
-                  <input
-                    type="checkbox"
-                    checked={draft.use_regex}
-                    onChange={(e) => patchDraft({ use_regex: e.target.checked })}
-                  />
-                  Regex pattern
-                </label>
-                <div className="field">
-                  <span>Toast text</span>
-                  <input
-                    type="text"
-                    value={draft.display_text}
-                    onChange={(e) => patchDraft({ display_text: e.target.value })}
-                    placeholder="{C} and {S} supported"
-                  />
-                </div>
-                <div className="grid-2">
-                  <div className="field">
-                    <span>Timer (sec)</span>
+                <div className="inspector-chrome">
+                  <div className="detail-bar">
+                    <button
+                      type="button"
+                      className="btn ghost sm"
+                      title="Return to the triggers list"
+                      onClick={() => setInspecting(false)}
+                    >
+                      ← Triggers
+                    </button>
                     <input
-                      type="number"
-                      min={0}
-                      value={draft.timer_seconds}
-                      onChange={(e) => patchDraft({ timer_seconds: e.target.value })}
-                    />
-                  </div>
-                  <div className="field">
-                    <span>Timer label</span>
-                    <input
+                      className="detail-title"
                       type="text"
-                      value={draft.timer_name}
-                      onChange={(e) => patchDraft({ timer_name: e.target.value })}
+                      value={draft.name}
+                      placeholder="Untitled"
+                      title="Trigger name"
+                      aria-label="Trigger name"
+                      onChange={(e) => patchTriggerName(e.target.value)}
                     />
+                    <span className="grow" />
+                    <button
+                      className="btn sm"
+                      type="button"
+                      title="Add another trigger in this set"
+                      onClick={addSibling}
+                    >
+                      Add trigger
+                    </button>
                   </div>
+                  <p className="path">{selected.group.name}</p>
                 </div>
-                <div className="field">
-                  <span>Early end patterns</span>
-                  <textarea
-                    value={draft.early_end}
-                    onChange={(e) => patchDraft({ early_end: e.target.value })}
-                    placeholder="One per line"
-                  />
-                </div>
-                <div className="field">
-                  <label className="check">
-                    <input
-                      type="checkbox"
-                      checked={draft.tts_enabled}
-                      onChange={(e) => patchDraft({ tts_enabled: e.target.checked })}
-                    />
-                    Speak with TTS (uncheck to use a chime instead)
-                  </label>
-                </div>
-                {draft.tts_enabled ? (
-                  <div className="field">
-                    <span>Speak line</span>
-                    <div className="row-inline">
+
+                <div className="inspector-form">
+                  <div className="inspector-col">
+                    <div className="field">
+                      <span>Name</span>
+                      <input
+                        ref={nameInputRef}
+                        type="text"
+                        value={draft.name}
+                        placeholder="Untitled"
+                        onChange={(e) => patchTriggerName(e.target.value)}
+                      />
+                    </div>
+                    <div className="try">
+                      <label>Try a log line</label>
+                      <textarea
+                        placeholder="Paste a line from eqlog_*.txt to verify this pattern"
+                        value={tryLine}
+                        onChange={(e) => setTryLine(e.target.value)}
+                      />
+                      {tryResult ? (
+                        <div className={`try-result ${tryResult.hit ? "hit" : "miss"}`}>
+                          {tryResult.hit
+                            ? "Would fire on that line"
+                            : "No match — adjust the pattern"}
+                        </div>
+                      ) : (
+                        <div className="try-result">
+                          Strips the [timestamp] automatically, same as the live engine.
+                        </div>
+                      )}
+                      <button
+                        className="btn sm"
+                        type="button"
+                        title="Show this trigger in the overlay (toast, timer, and audio). Uses the try line for captures when filled in."
+                        onClick={() => {
+                          void fireInOverlay();
+                        }}
+                      >
+                        Fire in overlay
+                      </button>
+                    </div>
+
+                    <div className="field">
+                      <span>Pattern</span>
+                      <textarea
+                        value={draft.search}
+                        onChange={(e) => patchDraft({ search: e.target.value })}
+                      />
+                    </div>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={draft.use_regex}
+                        onChange={(e) => patchDraft({ use_regex: e.target.checked })}
+                      />
+                      Regex pattern
+                    </label>
+                    <div className="field">
+                      <span>Notes</span>
                       <input
                         type="text"
-                        value={draft.speak}
-                        onChange={(e) => patchDraft({ speak: e.target.value })}
-                        placeholder="What the voice says — e.g. Out of mana"
+                        value={draft.comments}
+                        onChange={(e) => patchDraft({ comments: e.target.value })}
                       />
-                      <button
-                        className="btn"
-                        type="button"
-                        onClick={() => {
-                          const line = draft.speak.trim() || "Alert test";
-                          void testSpeech(line)
-                            .then((msg) => {
-                              setNote(msg);
-                              setError(null);
-                            })
-                            .catch((err) => {
-                              setError(`Audio failed: ${String(err)}`);
-                              setNote(null);
-                            });
-                        }}
-                      >
-                        Test
-                      </button>
                     </div>
                   </div>
-                ) : (
-                  <div className="field">
-                    <span>Alert sound</span>
-                    <div className="row-inline">
-                      <select
-                        value={draft.sound || "ping"}
-                        onChange={(e) => patchDraft({ sound: e.target.value })}
-                      >
-                        {alertSounds.map((s) => (
-                          <option key={s.id} value={s.id}>
-                            {s.label}
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        className="btn"
-                        type="button"
-                        disabled={!draft.sound || draft.sound === "none"}
-                        onClick={() => {
-                          void playAlertSound(draft.sound).catch((err) =>
-                            setError(`Sound failed: ${String(err)}`)
-                          );
-                        }}
-                      >
-                        Preview
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <div className="field">
-                  <span>Notes</span>
-                  <input
-                    type="text"
-                    value={draft.comments}
-                    onChange={(e) => patchDraft({ comments: e.target.value })}
-                  />
-                </div>
 
-                <div className="actions">
-                  <button
-                    className="btn primary"
-                    type="button"
-                    disabled={!draftDirty}
-                    onClick={saveDraft}
-                  >
-                    Save
-                  </button>
-                  <button
-                    className="btn ghost"
-                    type="button"
-                    disabled={!draftDirty}
-                    onClick={() => {
-                      if (selected) {
-                        setDraft(triggerToDraft(selected.trigger));
-                        setDraftDirty(false);
-                      }
-                    }}
-                  >
-                    Revert
-                  </button>
-                  <button className="btn danger" type="button" onClick={deleteSelected}>
-                    Delete
-                  </button>
+                  <div className="inspector-col">
+                    <div className="field">
+                      <span>Toast text</span>
+                      <input
+                        type="text"
+                        value={draft.display_text}
+                        onChange={(e) => patchDraft({ display_text: e.target.value })}
+                        placeholder="{C} and {S} supported"
+                      />
+                    </div>
+                    <div className="grid-2">
+                      <div className="field">
+                        <span>Timer (sec)</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={draft.timer_seconds}
+                          onChange={(e) => patchDraft({ timer_seconds: e.target.value })}
+                        />
+                      </div>
+                      <div className="field">
+                        <span>Timer label</span>
+                        <input
+                          type="text"
+                          value={draft.timer_name}
+                          onChange={(e) => patchDraft({ timer_name: e.target.value })}
+                        />
+                      </div>
+                    </div>
+                    <div className="field">
+                      <span>Early end patterns</span>
+                      <textarea
+                        value={draft.early_end}
+                        onChange={(e) => patchDraft({ early_end: e.target.value })}
+                        placeholder="One per line"
+                      />
+                    </div>
+                    <label className="check">
+                      <input
+                        type="checkbox"
+                        checked={draft.tts_enabled}
+                        onChange={(e) => patchDraft({ tts_enabled: e.target.checked })}
+                      />
+                      Speak with TTS (uncheck to use a chime instead)
+                    </label>
+                    {draft.tts_enabled ? (
+                      <div className="field">
+                        <span>Speak line</span>
+                        <div className="row-inline">
+                          <input
+                            type="text"
+                            value={draft.speak}
+                            onChange={(e) => patchDraft({ speak: e.target.value })}
+                            placeholder="What the voice says — e.g. Out of mana"
+                          />
+                          <button
+                            className="btn"
+                            type="button"
+                            title="Speak this line with the selected Kokoro voice"
+                            onClick={() => {
+                              const line = draft.speak.trim() || "Alert test";
+                              void testSpeech(line)
+                                .then((msg) => {
+                                  setNote(msg);
+                                  setError(null);
+                                })
+                                .catch((err) => {
+                                  setError(`Audio failed: ${String(err)}`);
+                                  setNote(null);
+                                });
+                            }}
+                          >
+                            Test
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="field">
+                        <span>Alert sound</span>
+                        <div className="row-inline">
+                          <select
+                            value={draft.sound || "ping"}
+                            onChange={(e) => patchDraft({ sound: e.target.value })}
+                          >
+                            {alertSounds.map((s) => (
+                              <option key={s.id} value={s.id}>
+                                {s.label}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            className="btn"
+                            type="button"
+                            disabled={!draft.sound || draft.sound === "none"}
+                            title="Preview the selected alert chime"
+                            onClick={() => {
+                              void playAlertSound(draft.sound).catch((err) =>
+                                setError(`Sound failed: ${String(err)}`)
+                              );
+                            }}
+                          >
+                            Preview
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="actions">
+                    <button
+                      className="btn primary"
+                      type="button"
+                      disabled={!draftDirty}
+                      title="Save changes to this trigger"
+                      onClick={saveDraft}
+                    >
+                      Save
+                    </button>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      disabled={!draftDirty}
+                      title="Discard unsaved edits"
+                      onClick={() => {
+                        if (selected) {
+                          setDraft(triggerToDraft(selected.trigger));
+                          setDraftDirty(false);
+                        }
+                      }}
+                    >
+                      Revert
+                    </button>
+                    <button
+                      className="btn danger"
+                      type="button"
+                      title="Delete this trigger permanently"
+                      onClick={deleteSelected}
+                    >
+                      Delete
+                    </button>
+                  </div>
                 </div>
               </div>
             ) : (
               <>
-                <div className="main-toolbar">
-                  <button
-                    className="btn with-icon"
-                    type="button"
-                    title="Auto-find the newest EverQuest Legends character log"
-                    onClick={() => void attachLog(false)}
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <circle cx="11" cy="11" r="6.5" />
-                      <path d="M16.5 16.5 21 21" />
-                    </svg>
-                    Find log
-                  </button>
-                  <button
-                    className={`btn with-icon ${overlayOpen ? "ghost" : "gold"}`}
-                    type="button"
-                    title={
-                      overlayOpen
-                        ? "Hide the always-on-top timer and toast overlay"
-                        : "Open the always-on-top timer and toast overlay"
-                    }
-                    onClick={() =>
-                      void invoke(overlayOpen ? "close_overlay" : "open_overlay")
-                    }
-                  >
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-                      <rect x="3" y="5" width="18" height="14" rx="2" />
-                      <path d="M8 19v2M16 19v2M3 10h18" />
-                    </svg>
-                    {overlayOpen ? "Close overlay" : "Overlay"}
-                  </button>
+                <div className="main-heading">
+                  <h1 className="main-title">Triggers</h1>
+                  <p className="main-sub">Configure when alerts are triggered.</p>
                 </div>
-
-                <h1 className="main-title">Triggers</h1>
-                <p className="main-sub">Configure when alerts are triggered.</p>
 
                 <div className="tools">
                   <input
                     className="search"
                     type="search"
+                    title="Search triggers by name or pattern"
                     placeholder="Search name or pattern…"
                     value={query}
                     onChange={(e) => setQuery(e.target.value)}
@@ -1629,16 +2063,22 @@ export default function App() {
                         ["armed", "Armed"],
                         ["off", "Off"],
                       ] as const
-                    ).map(([mode, label]) => (
+                    ).map(([mode, label]) => {
+                      let tip = "Show all trigger sets";
+                      if (mode === "armed") tip = "Show only armed sets";
+                      if (mode === "off") tip = "Show only disarmed sets";
+                      return (
                       <button
                         key={mode}
                         type="button"
                         className={`btn sm ${filter === mode ? "gold" : "ghost"}`}
+                        title={tip}
                         onClick={() => setFilter(mode)}
                       >
                         {label}
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </div>
 
@@ -1646,13 +2086,14 @@ export default function App() {
                   <div className="empty">
                     {library.groups.length === 0 ? (
                       <>
-                        No triggers loaded.{" "}
+                        <p>No triggers loaded. Restore the built-in defaults to get started.</p>
                         <button
                           className="btn sm primary"
                           type="button"
+                          title="Install the built-in EQL Essentials, classes, and raids pack"
                           onClick={() => void restoreStarter()}
                         >
-                          Install starter pack
+                          Restore default triggers
                         </button>
                       </>
                     ) : (
@@ -1662,93 +2103,6 @@ export default function App() {
                 ) : (
                   visibleTree.map((node) => renderRootSection(node))
                 )}
-
-                <section className="activity-strip">
-                  <div className="activity-strip-head">
-                    <h3>Activity</h3>
-                    <span className="grow" />
-                    <button
-                      className="btn sm ghost"
-                      type="button"
-                      onClick={() => setActivityOpen((v) => !v)}
-                    >
-                      {activityOpen ? "Hide" : "Show"}
-                    </button>
-                    <button
-                      className="btn sm"
-                      type="button"
-                      onClick={() => void clearAlerts()}
-                    >
-                      Clear
-                    </button>
-                  </div>
-                  {activityOpen ? (
-                    <div className="activity-grid">
-                      <div className="activity-col">
-                        <h4>Timers</h4>
-                        {(engine?.timers.length ?? 0) === 0 ? (
-                          <div className="quiet">No running timers</div>
-                        ) : (
-                          engine!.timers.map((timer) => {
-                            const left = remainingSecs(timer, now);
-                            const pct = Math.max(
-                              0,
-                              Math.min(
-                                100,
-                                ((timer.ends_ms - now) / (timer.duration_secs * 1000)) *
-                                  100
-                              )
-                            );
-                            return (
-                              <div className="timer" key={timer.id}>
-                                <div className="t-head">
-                                  <div className="t-name">{timer.name}</div>
-                                  <button
-                                    type="button"
-                                    className="timer-dismiss"
-                                    title="Clear this timer"
-                                    onClick={() => {
-                                      void invoke<EngineState>("clear_timer", {
-                                        timerId: timer.id,
-                                      })
-                                        .then(setEngine)
-                                        .catch((err) => setError(String(err)));
-                                    }}
-                                  >
-                                    ×
-                                  </button>
-                                </div>
-                                <div className="bar">
-                                  <i style={{ width: `${pct}%` }} />
-                                </div>
-                                <div className="left">{formatCountdown(left)}</div>
-                              </div>
-                            );
-                          })
-                        )}
-                      </div>
-                      <div className="activity-col">
-                        <h4>Fired</h4>
-                        {(engine?.recent_alerts.length ?? 0) === 0 ? (
-                          <div className="quiet">Waiting for matches on the live log</div>
-                        ) : (
-                          engine!.recent_alerts.map((alert, i) => (
-                            <div
-                              className={`event ${i === 0 ? "fresh" : ""}`}
-                              key={alert.id}
-                            >
-                              <div className="when">{formatTime(alert.at_ms)}</div>
-                              <div className="text">{alert.text}</div>
-                              <div className="from">
-                                {alert.trigger_name} · {alert.kind}
-                              </div>
-                            </div>
-                          ))
-                        )}
-                      </div>
-                    </div>
-                  ) : null}
-                </section>
               </>
             )}
           </div>
@@ -1756,18 +2110,23 @@ export default function App() {
       </div>
 
       {showSettings ? (
-        <>
-          <div
-            className="drawer-backdrop"
-            onClick={() => setShowSettings(false)}
-          />
-          <aside className="drawer" role="dialog" aria-label="Settings">
+        <div
+          className="drawer-backdrop"
+          onClick={() => setShowSettings(false)}
+        >
+          <aside
+            className="drawer"
+            role="dialog"
+            aria-label="Settings"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="drawer-head">
               <h2>Settings</h2>
               <button
                 type="button"
                 className="icon-btn"
                 aria-label="Close settings"
+                title="Close settings"
                 onClick={() => setShowSettings(false)}
               >
                 ✕
@@ -1781,6 +2140,7 @@ export default function App() {
                   <button
                     className="btn primary"
                     type="button"
+                    title="Auto-find the newest EverQuest Legends character log"
                     onClick={() => void attachLog(false)}
                   >
                     Find log
@@ -1788,18 +2148,25 @@ export default function App() {
                   <button
                     className="btn"
                     type="button"
+                    title="Pick a log file manually"
                     onClick={() => void attachLog(true)}
                   >
                     Browse…
                   </button>
                   {live ? (
-                    <button className="btn ghost" type="button" onClick={() => void stop()}>
+                    <button
+                      className="btn ghost"
+                      type="button"
+                      title="Stop watching the log"
+                      onClick={() => void stop()}
+                    >
                       Disconnect
                     </button>
                   ) : (
                     <button
                       className="btn"
                       type="button"
+                      title="Reconnect to the last known log"
                       disabled={!(engine?.log_path || settings?.last_log_path)}
                       onClick={() => void reconnect()}
                     >
@@ -1918,6 +2285,7 @@ export default function App() {
                     <button
                       className="btn sm"
                       type="button"
+                      title="Preview the selected Kokoro voice"
                       onClick={() => {
                         const voice_id =
                           settings?.voice_id ||
@@ -1949,6 +2317,7 @@ export default function App() {
                       type="range"
                       min={0}
                       max={100}
+                      title="Voice volume"
                       value={Math.round((settings?.voice_volume ?? 0.2) * 100)}
                       onChange={(e) => {
                         const voice_volume = Number(e.target.value) / 100;
@@ -2020,6 +2389,11 @@ export default function App() {
                   <button
                     className={overlayOpen ? "btn ghost" : "btn gold"}
                     type="button"
+                    title={
+                      overlayOpen
+                        ? "Hide the always-on-top overlay"
+                        : "Open the always-on-top timer and toast overlay"
+                    }
                     onClick={() =>
                       void invoke(overlayOpen ? "close_overlay" : "open_overlay")
                     }
@@ -2029,6 +2403,7 @@ export default function App() {
                   <button
                     className="btn ghost"
                     type="button"
+                    title="Clear all running overlay timers"
                     onClick={() => void clearTimers()}
                   >
                     Clear timers
@@ -2036,6 +2411,7 @@ export default function App() {
                   <button
                     className="btn ghost"
                     type="button"
+                    title="Clear recent fired alerts from activity"
                     onClick={() => void clearAlerts()}
                   >
                     Clear alerts
@@ -2043,25 +2419,46 @@ export default function App() {
                 </div>
               </section>
 
-              <section className="settings-section">
+              <section className="settings-section span-2">
                 <h3>Trigger library</h3>
+                <p className="settings-note">
+                  Import packs or restore built-in defaults. Add your own triggers under
+                  Custom on the Triggers page.
+                </p>
                 <div className="settings-row">
-                  <button className="btn" type="button" onClick={addGroup}>
-                    New set
+                  <button
+                    className="btn"
+                    type="button"
+                    title="Create a custom trigger"
+                    onClick={addCustomTrigger}
+                  >
+                    Add custom trigger
                   </button>
                   <button
                     className="btn"
                     type="button"
+                    title="Import a GINA or EQL package into your library"
                     onClick={() => void importGinaPack()}
                   >
                     Import…
                   </button>
+                </div>
+                <div className="settings-restore">
+                  <div className="settings-restore-copy">
+                    <strong>Deleted triggers or wiped a set?</strong>
+                    <span>
+                      Restore the full default pack (EQL Essentials, all classes, and
+                      classic EQL Raids). Custom sets are kept; edits to built-in sets
+                      are overwritten.
+                    </span>
+                  </div>
                   <button
-                    className="btn ghost"
+                    className="btn gold"
                     type="button"
+                    title="Replace your library with the built-in EQL starter pack"
                     onClick={() => void restoreStarter()}
                   >
-                    Reset starter
+                    Restore default triggers
                   </button>
                 </div>
               </section>
@@ -2077,6 +2474,7 @@ export default function App() {
                     className="btn"
                     type="button"
                     disabled={updateBusy}
+                    title="Check GitHub for a newer EQL Alerts build"
                     onClick={() => void runUpdateCheck()}
                   >
                     {updateBusy ? "Checking…" : "Check for updates"}
@@ -2086,6 +2484,7 @@ export default function App() {
                       className="btn gold"
                       type="button"
                       disabled={updateBusy}
+                      title={`Install update ${pendingUpdate.version}`}
                       onClick={() => void runInstallUpdate()}
                     >
                       Install {pendingUpdate.version}
@@ -2094,6 +2493,7 @@ export default function App() {
                   <button
                     className="btn ghost"
                     type="button"
+                    title="Open the latest GitHub release page"
                     onClick={() => void openLatestReleasePage()}
                   >
                     Latest release…
@@ -2107,6 +2507,7 @@ export default function App() {
                   <button
                     className="btn ghost"
                     type="button"
+                    title="Open the in-app quick start walkthrough"
                     onClick={() => {
                       setShowSettings(false);
                       setShowQuickStart(true);
@@ -2118,7 +2519,7 @@ export default function App() {
               </section>
             </div>
           </aside>
-        </>
+        </div>
       ) : null}
 
       {showAddClass ? (
@@ -2135,6 +2536,7 @@ export default function App() {
                 type="button"
                 className="icon-btn"
                 aria-label="Close"
+                title="Close"
                 onClick={() => setShowAddClass(false)}
               >
                 ✕
@@ -2142,7 +2544,8 @@ export default function App() {
             </div>
             <div className="modal-body">
               <p className="settings-note" style={{ fontFamily: "inherit" }}>
-                Arm a class pack to show it in the sidebar and fire its triggers.
+                Arm up to {MAX_ARMED_CLASSES} class packs for the sidebar. Disarm one
+                to free a slot.
               </p>
               {classPacks.length === 0 ? (
                 <div className="empty">
@@ -2158,15 +2561,24 @@ export default function App() {
                     const partial =
                       pack.enabledCount > 0 &&
                       pack.enabledCount < pack.groupIds.length;
+                    const armed = on || partial;
+                    const atCap =
+                      !armed && armedPacks.length >= MAX_ARMED_CLASSES;
                     return (
                       <button
                         key={pack.name}
                         type="button"
-                        className={`add-class-tile ${on || partial ? "on" : ""}`}
+                        className={`add-class-tile ${armed ? "on" : ""} ${atCap ? "locked" : ""}`}
                         style={
                           {
                             "--chip-accent": classAccent(pack.name),
                           } as CSSProperties
+                        }
+                        disabled={atCap}
+                        title={
+                          atCap
+                            ? `Limit of ${MAX_ARMED_CLASSES} classes — disarm one first`
+                            : undefined
                         }
                         onClick={() => toggleClassPack(pack)}
                       >

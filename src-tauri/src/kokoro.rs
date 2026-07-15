@@ -61,6 +61,7 @@ fn http_get(path: &str, timeout_ms: u64) -> Result<String, String> {
     let output = Command::new("curl")
         .args([
             "-sS",
+            "--fail",
             "--max-time",
             &format!("{}", (timeout_ms / 1000).max(1)),
             &url,
@@ -73,7 +74,11 @@ fn http_get(path: &str, timeout_ms: u64) -> Result<String, String> {
         let err = String::from_utf8_lossy(&output.stderr);
         return Err(format!("kokoro http failed: {err}"));
     }
-    Ok(String::from_utf8_lossy(&output.stdout).into_owned())
+    let body = String::from_utf8_lossy(&output.stdout).into_owned();
+    if body.trim().is_empty() {
+        return Err("kokoro http empty reply".into());
+    }
+    Ok(body)
 }
 
 fn port_open() -> bool {
@@ -83,10 +88,56 @@ fn port_open() -> bool {
     TcpStream::connect_timeout(&addr, Duration::from_millis(80)).is_ok()
 }
 
+fn daemon_healthy() -> bool {
+    match http_get("/voices", 2_000) {
+        Ok(body) => {
+            let t = body.trim();
+            t.starts_with('[') || t.contains("\"id\"")
+        }
+        Err(_) => false,
+    }
+}
+
+fn stop_tracked_daemon() {
+    let mut guard = DAEMON.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(mut child) = guard.take() {
+        let _ = child.kill();
+        let _ = child.wait();
+    }
+}
+
+fn kill_port_listener() {
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    {
+        let output = Command::new("lsof")
+            .args([
+                &format!("-tiTCP:{KOKORO_PORT}"),
+                "-sTCP:LISTEN",
+            ])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .output();
+        if let Ok(output) = output {
+            let pids = String::from_utf8_lossy(&output.stdout);
+            for pid in pids.split_whitespace() {
+                let _ = Command::new("kill").args(["-9", pid]).status();
+            }
+        }
+    }
+}
+
 pub fn ensure_daemon() -> Result<(), String> {
-    if port_open() {
+    if daemon_healthy() {
         return Ok(());
     }
+
+    // Port open but unhealthy (stale process from another checkout) — replace it.
+    stop_tracked_daemon();
+    if port_open() {
+        kill_port_listener();
+        thread::sleep(Duration::from_millis(150));
+    }
+
     if !is_available() {
         return Err(
             "Kokoro TTS not set up. Run scripts/setup_kokoro.sh (Mac) or scripts/setup_kokoro.bat (Windows)."
@@ -99,7 +150,7 @@ pub fn ensure_daemon() -> Result<(), String> {
 
     let mut guard = DAEMON.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(child) = guard.as_mut() {
-        if child.try_wait().ok().flatten().is_none() && port_open() {
+        if child.try_wait().ok().flatten().is_none() && daemon_healthy() {
             return Ok(());
         }
     }
@@ -113,12 +164,18 @@ pub fn ensure_daemon() -> Result<(), String> {
         .spawn()
         .map_err(|e| format!("start kokoro daemon: {e}"))?;
     *guard = Some(child);
+    drop(guard);
 
-    for _ in 0..80 {
-        if port_open() {
-            // Warm /voices so first speak is ready.
-            let _ = http_get("/voices", 30_000);
+    for _ in 0..100 {
+        if daemon_healthy() {
             return Ok(());
+        }
+        if port_open() {
+            // Daemon accepted TCP but /voices not ready yet.
+            let _ = http_get("/voices", 5_000);
+            if daemon_healthy() {
+                return Ok(());
+            }
         }
         thread::sleep(Duration::from_millis(100));
     }

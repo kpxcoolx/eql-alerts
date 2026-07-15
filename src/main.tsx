@@ -28,7 +28,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, BoundaryState> {
             color: "#eef2f7",
           }}
         >
-          <h1 style={{ fontSize: 18, margin: "0 0 8px" }}>UI crashed</h1>
+          <h1 style={{ fontSize: 24, margin: "0 0 8px" }}>UI crashed</h1>
           <p style={{ color: "#8b95a8" }}>{this.state.error}</p>
           <button
             type="button"

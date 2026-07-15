@@ -213,9 +213,145 @@ impl TriggerEngine {
         self.recent_alerts.clear();
     }
 
-    pub fn prune_expired_timers(&mut self) {
+    /// Synthetic fire for overlay preview from the trigger editor.
+    /// Skips match/debounce/enabled checks. Uses `sample_action` for `{S}` / captures when set.
+    pub fn test_fire(&mut self, trigger: &Trigger, sample_action: Option<&str>) -> MatchAction {
+        self.prune_expired_timers();
         let now = now_ms();
+        let character = self
+            .character
+            .clone()
+            .unwrap_or_else(|| "Character".to_string());
+        let action = sample_action.unwrap_or("").trim();
+
+        let caps_owned: Option<Vec<String>> = if action.is_empty() {
+            None
+        } else if trigger.use_regex && !trigger.search.is_empty() {
+            let bound = bind_character_token(&trigger.search, &character, true);
+            match Regex::new(&bound) {
+                Ok(re) => re.captures(action).map(|c| {
+                    c.iter()
+                        .skip(1)
+                        .map(|m| m.map(|x| x.as_str().to_string()).unwrap_or_default())
+                        .collect()
+                }),
+                Err(_) => None,
+            }
+        } else {
+            Some(Vec::new())
+        };
+
+        let display_template = trigger
+            .display_text
+            .as_deref()
+            .filter(|s| !s.trim().is_empty())
+            .unwrap_or(&trigger.name);
+        let display = expand_tokens(
+            display_template,
+            &character,
+            action,
+            caps_owned.as_deref(),
+        );
+
+        let speak = if trigger.tts_enabled {
+            let template = trigger
+                .speak
+                .as_deref()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or(display_template);
+            Some(expand_tokens(
+                template,
+                &character,
+                action,
+                caps_owned.as_deref(),
+            ))
+        } else {
+            None
+        };
+
+        let sound = if !trigger.tts_enabled {
+            let s = trigger
+                .sound
+                .as_deref()
+                .filter(|s| !s.trim().is_empty() && !s.eq_ignore_ascii_case("none"))
+                .unwrap_or("ping");
+            Some(s.to_string())
+        } else {
+            None
+        };
+
+        let mut started_timer = None;
+        if let Some(secs) = trigger.timer_seconds {
+            if secs > 0 {
+                let name_template = trigger
+                    .timer_name
+                    .clone()
+                    .filter(|s| !s.trim().is_empty())
+                    .unwrap_or_else(|| trigger.name.clone());
+                let timer_name =
+                    expand_tokens(&name_template, &character, action, caps_owned.as_deref());
+                self.timers.retain(|t| t.name != timer_name);
+                let timer = ActiveTimer {
+                    id: format!("t{}", self.next_alert_id),
+                    trigger_id: trigger.id.clone(),
+                    name: timer_name,
+                    started_ms: now,
+                    ends_ms: now + secs * 1000,
+                    duration_secs: secs,
+                };
+                self.next_alert_id += 1;
+                started_timer = Some(timer.clone());
+                self.timers.push(timer);
+            }
+        }
+
+        let speak_useful = speak
+            .as_ref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let display_useful = !display.trim().is_empty();
+        let sound_useful = sound
+            .as_ref()
+            .map(|s| !s.eq_ignore_ascii_case("none"))
+            .unwrap_or(false);
+
+        let alert = FiredAlert {
+            id: format!("a{}", self.next_alert_id),
+            trigger_id: trigger.id.clone(),
+            trigger_name: trigger.name.clone(),
+            kind: if started_timer.is_some() {
+                "timer".to_string()
+            } else {
+                "text".to_string()
+            },
+            text: if display_useful {
+                display
+            } else {
+                trigger.name.clone()
+            },
+            at_ms: now,
+        };
+        self.next_alert_id += 1;
+        self.recent_alerts.insert(0, alert.clone());
+        if self.recent_alerts.len() > 40 {
+            self.recent_alerts.truncate(40);
+        }
+
+        MatchAction {
+            alert: Some(alert),
+            sound: if sound_useful { sound } else { None },
+            speak: if speak_useful { speak } else { None },
+            started_timer,
+            cleared_timer_ids: vec![],
+        }
+    }
+
+    /// Drop finished timers. Returns true if any were removed.
+    pub fn prune_expired_timers(&mut self) -> bool {
+        let now = now_ms();
+        let before = self.timers.len();
         self.timers.retain(|t| t.ends_ms > now);
+        self.timers.len() != before
     }
 
     pub fn snapshot(&self) -> EngineState {
@@ -760,6 +896,42 @@ mod tests {
                 .map(|al| al.text.contains("Zoning"))
                 .unwrap_or(false)
         }));
+    }
+
+    #[test]
+    fn test_fire_shows_toast_and_timer() {
+        let mut engine = TriggerEngine::new(TriggerLibrary::default());
+        engine.set_character(Some("Francis".into()));
+        let trigger = Trigger {
+            id: "mez".into(),
+            name: "Mesmerize".into(),
+            enabled: false,
+            search: r"^(.+) has been mesmerized\.$".into(),
+            use_regex: true,
+            display_text: Some("Mezzed ${1}".into()),
+            timer_seconds: Some(24),
+            timer_name: Some("Mesmerize - ${1}".into()),
+            early_end: vec![],
+            sound: None,
+            speak: Some("Mesmerize on ${1}".into()),
+            tts_enabled: true,
+            comments: None,
+        };
+        let action = engine.test_fire(
+            &trigger,
+            Some("a froglok tuk rider has been mesmerized."),
+        );
+        let alert = action.alert.expect("alert");
+        assert_eq!(alert.text, "Mezzed a froglok tuk rider");
+        assert_eq!(
+            action.speak.as_deref(),
+            Some("Mesmerize on a froglok tuk rider")
+        );
+        let timer = action.started_timer.expect("timer");
+        assert_eq!(timer.name, "Mesmerize - a froglok tuk rider");
+        assert_eq!(timer.duration_secs, 24);
+        assert_eq!(engine.snapshot().recent_alerts.len(), 1);
+        assert_eq!(engine.snapshot().timers.len(), 1);
     }
 
     #[test]
