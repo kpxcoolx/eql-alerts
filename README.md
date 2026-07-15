@@ -2,6 +2,8 @@
 
 Lightweight log triggers for **EverQuest Legends** — a modern, no-frills take on [GINA](https://quarm.guide/gina).
 
+[Latest release](https://github.com/kpxcoolx/eql-alerts/releases/latest) · [Discussions](https://github.com/kpxcoolx/eql-alerts/discussions) · [eqlalerts.com](https://eqlalerts.com)
+
 Tails your `eqlog_*.txt`, matches simple search text (or regex), and fires:
 
 - **Text overlays** (toasts)
@@ -180,6 +182,10 @@ Then publishes only when those assets exist. In the app: **Updates** / banner **
 |--------|---------|
 | `TAURI_SIGNING_PRIVATE_KEY` | Contents of `.tauri-keys/eql-alerts.key` (local only; never commit) |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | Optional if the key is passwordless |
+
+## Contributors
+
+Feature ideas and questions: use [Discussions](https://github.com/kpxcoolx/eql-alerts/discussions) (Ideas / Q&A). Bugs: open an [Issue](https://github.com/kpxcoolx/eql-alerts/issues).
 
 ## Stack
 
