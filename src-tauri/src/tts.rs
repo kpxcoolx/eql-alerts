@@ -7,9 +7,7 @@
 
 use serde::Serialize;
 use std::fs::File;
-use std::fs::OpenOptions;
 use std::io::BufReader;
-use std::io::Write;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -166,11 +164,7 @@ pub struct AlertSoundInfo {
 }
 
 fn tts_log(msg: &str) {
-    eprintln!("eql-alerts TTS: {msg}");
-    let path = PathBuf::from("/tmp/eql-alerts-tts.log");
-    if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&path) {
-        let _ = writeln!(f, "{msg}");
-    }
+    crate::app_log::write(&format!("TTS: {msg}"));
 }
 
 pub fn alert_sounds() -> Vec<AlertSoundInfo> {

@@ -131,6 +131,14 @@ fn extract_current(root: &Path) -> bool {
 }
 
 fn extract_pack_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
+    let zip_bytes = std::fs::metadata(zip_path).map(|m| m.len()).unwrap_or(0);
+    crate::app_log::write(&format!(
+        "Kokoro: extracting {} ({} MB) → {}",
+        zip_path.display(),
+        zip_bytes / (1024 * 1024),
+        dest.display()
+    ));
+
     // Replace any previous extract so upgrades get a fresh Python/models tree.
     if dest.exists() {
         std::fs::remove_dir_all(dest).map_err(|e| format!("clear kokoro extract: {e}"))?;
@@ -139,7 +147,8 @@ fn extract_pack_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
 
     let file = std::fs::File::open(zip_path).map_err(|e| format!("open kokoro zip: {e}"))?;
     let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("kokoro zip: {e}"))?;
-    for i in 0..archive.len() {
+    let entry_count = archive.len();
+    for i in 0..entry_count {
         let mut entry = archive
             .by_index(i)
             .map_err(|e| format!("kokoro zip entry: {e}"))?;
@@ -163,11 +172,17 @@ fn extract_pack_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
         .map_err(|e| format!("kokoro pack version: {e}"))?;
 
     if !root_ready(dest) {
-        return Err(format!(
+        let err = format!(
             "Kokoro pack extracted but incomplete at {}",
             dest.display()
-        ));
+        );
+        crate::app_log::write(&format!("Kokoro: {err}"));
+        return Err(err);
     }
+    crate::app_log::write(&format!(
+        "Kokoro: extract done ({entry_count} entries) at {}",
+        dest.display()
+    ));
     Ok(())
 }
 
@@ -192,6 +207,12 @@ fn helper_root() -> Result<PathBuf, String> {
         extract_pack_zip(&zip, &extracted)?;
         return Ok(extracted);
     }
+    let tried = pack_zip_candidates()
+        .into_iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(" | ");
+    crate::app_log::write(&format!("Kokoro: no pack zip found. Tried: {tried}"));
     Err(
         "Kokoro TTS not set up. Reinstall the app, or run scripts/setup_kokoro.sh (Mac) / scripts/setup_kokoro.bat (Windows)."
             .into(),
@@ -315,16 +336,38 @@ pub fn ensure_daemon() -> Result<(), String> {
         return Ok(());
     }
 
+    crate::app_log::write("Kokoro: ensure_daemon — daemon not healthy, starting…");
+
     // Port open but unhealthy (stale process from another checkout) — replace it.
     stop_tracked_daemon();
     if port_open() {
+        crate::app_log::write("Kokoro: killing stale listener on port");
         kill_port_listener();
         thread::sleep(Duration::from_millis(150));
     }
 
-    let root = helper_root()?;
-    let py = python_bin(&root).ok_or("Kokoro python missing")?;
+    let root = match helper_root() {
+        Ok(r) => r,
+        Err(err) => {
+            crate::app_log::write(&format!("Kokoro: helper_root failed: {err}"));
+            return Err(err);
+        }
+    };
+    let py = match python_bin(&root) {
+        Some(p) => p,
+        None => {
+            let err = "Kokoro python missing".to_string();
+            crate::app_log::write(&format!("Kokoro: {err} (root={})", root.display()));
+            return Err(err);
+        }
+    };
     let script = root.join("speak.py");
+    crate::app_log::write(&format!(
+        "Kokoro: spawning {} {} (cwd={})",
+        py.display(),
+        script.display(),
+        root.display()
+    ));
 
     let mut guard = DAEMON.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(child) = guard.as_mut() {
@@ -343,26 +386,32 @@ pub fn ensure_daemon() -> Result<(), String> {
     {
         cmd.creation_flags(CREATE_NO_WINDOW);
     }
-    let child = cmd
-        .spawn()
-        .map_err(|e| format!("start kokoro daemon: {e}"))?;
+    let child = cmd.spawn().map_err(|e| {
+        let msg = format!("start kokoro daemon: {e}");
+        crate::app_log::write(&format!("Kokoro: {msg}"));
+        msg
+    })?;
     *guard = Some(child);
     drop(guard);
 
     for _ in 0..100 {
         if daemon_healthy() {
+            crate::app_log::write("Kokoro: daemon healthy");
             return Ok(());
         }
         if port_open() {
             // Daemon accepted TCP but /voices not ready yet.
             let _ = http_get("/voices", 5_000);
             if daemon_healthy() {
+                crate::app_log::write("Kokoro: daemon healthy");
                 return Ok(());
             }
         }
         thread::sleep(Duration::from_millis(100));
     }
-    Err("Kokoro daemon failed to start (timeout)".into())
+    let err = "Kokoro daemon failed to start (timeout)".to_string();
+    crate::app_log::write(&format!("Kokoro: {err}"));
+    Err(err)
 }
 
 /// Start daemon if needed, then return the live voice catalog.

@@ -1,3 +1,4 @@
+mod app_log;
 mod engine;
 mod eql_compat;
 mod gina_import;
@@ -654,14 +655,14 @@ fn test_speech(
         line
     };
 
-    eprintln!(
-        "eql-alerts test_speech invoked: {line:?} voice={voice} vol={:.2}",
+    app_log::write(&format!(
+        "test_speech: {line:?} voice={voice} vol={:.2}",
         settings.voice_volume
-    );
+    ));
     match tts::speak_now(&line, &voice, settings.voice_volume) {
         Ok(()) => Ok(format!("Spoke with {voice}: “{line}”")),
         Err(err) => {
-            eprintln!("eql-alerts test_speech FAILED: {err}");
+            app_log::write(&format!("test_speech FAILED: {err}"));
             Err(err)
         }
     }
@@ -724,7 +725,13 @@ fn kokoro_status() -> serde_json::Value {
     serde_json::json!({
         "installed": kokoro::is_available(),
         "daemon": kokoro::daemon_running(),
+        "log_path": app_log::log_path().display().to_string(),
     })
+}
+
+#[tauri::command]
+fn get_app_log_path() -> String {
+    app_log::log_path().display().to_string()
 }
 
 #[tauri::command]
@@ -789,6 +796,13 @@ fn set_overlay_click_through(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    app_log::write(&format!(
+        "startup v{} ({})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::OS
+    ));
+    app_log::write(&format!("log file: {}", app_log::log_path().display()));
+
     let state = Arc::new(AppState {
         engine: Mutex::new(TriggerEngine::new(TriggerLibrary::default())),
         tail: Mutex::new(None),
@@ -899,7 +913,7 @@ pub fn run() {
                 .map_err(|e| e.to_string())?;
 
             if let Err(err) = create_overlay_window(app.handle()) {
-                eprintln!("overlay pre-create failed: {err}");
+                app_log::write(&format!("overlay pre-create failed: {err}"));
             }
 
             if settings.auto_monitor_on_start {
@@ -922,8 +936,11 @@ pub fn run() {
             // pre-cache common combat callouts so interrupt/stun aren't cold.
             let warm_voice = active_voice_id(&load_settings(app.handle()));
             std::thread::spawn(move || {
+                app_log::write("Kokoro: background warm starting");
                 if let Err(err) = kokoro::ensure_daemon() {
-                    eprintln!("eql-alerts Kokoro: {err}");
+                    app_log::write(&format!("Kokoro: background warm failed: {err}"));
+                } else {
+                    app_log::write("Kokoro: background warm ok");
                 }
                 tts::warm_essential_callouts(&warm_voice);
             });
@@ -969,6 +986,7 @@ pub fn run() {
             list_audio_output_devices,
             preview_kokoro_voice,
             kokoro_status,
+            get_app_log_path,
             get_overlay_status,
             start_monitoring,
             stop_monitoring,
