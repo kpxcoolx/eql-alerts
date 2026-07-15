@@ -98,6 +98,9 @@ pub struct ActiveTimer {
     pub started_ms: u64,
     pub ends_ms: u64,
     pub duration_secs: u64,
+    /// Captures from the log line that started this timer (GINA `${1}` early-end).
+    #[serde(default)]
+    pub captures: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,6 +301,7 @@ impl TriggerEngine {
                     started_ms: now,
                     ends_ms: now + secs * 1000,
                     duration_secs: secs,
+                    captures: caps_owned.clone().unwrap_or_default(),
                 };
                 self.next_alert_id += 1;
                 started_timer = Some(timer.clone());
@@ -309,36 +313,46 @@ impl TriggerEngine {
             .as_ref()
             .map(|s| !s.trim().is_empty())
             .unwrap_or(false);
-        let display_useful = !display.trim().is_empty();
+        let has_explicit_display = trigger
+            .display_text
+            .as_deref()
+            .map(|s| !s.trim().is_empty())
+            .unwrap_or(false);
+        let show_toast = if started_timer.is_some() {
+            has_explicit_display
+        } else {
+            !display.trim().is_empty()
+        };
         let sound_useful = sound
             .as_ref()
             .map(|s| !s.eq_ignore_ascii_case("none"))
             .unwrap_or(false);
 
-        let alert = FiredAlert {
-            id: format!("a{}", self.next_alert_id),
-            trigger_id: trigger.id.clone(),
-            trigger_name: trigger.name.clone(),
-            kind: if started_timer.is_some() {
-                "timer".to_string()
-            } else {
-                "text".to_string()
-            },
-            text: if display_useful {
-                display
-            } else {
-                trigger.name.clone()
-            },
-            at_ms: now,
+        let alert = if show_toast {
+            let alert = FiredAlert {
+                id: format!("a{}", self.next_alert_id),
+                trigger_id: trigger.id.clone(),
+                trigger_name: trigger.name.clone(),
+                kind: if started_timer.is_some() {
+                    "timer".to_string()
+                } else {
+                    "text".to_string()
+                },
+                text: display,
+                at_ms: now,
+            };
+            self.next_alert_id += 1;
+            self.recent_alerts.insert(0, alert.clone());
+            if self.recent_alerts.len() > 40 {
+                self.recent_alerts.truncate(40);
+            }
+            Some(alert)
+        } else {
+            None
         };
-        self.next_alert_id += 1;
-        self.recent_alerts.insert(0, alert.clone());
-        if self.recent_alerts.len() > 40 {
-            self.recent_alerts.truncate(40);
-        }
 
         MatchAction {
-            alert: Some(alert),
+            alert,
             sound: if sound_useful { sound } else { None },
             speak: if speak_useful { speak } else { None },
             started_timer,
@@ -379,7 +393,11 @@ impl TriggerEngine {
                 };
                 let mut early_regexes = Vec::new();
                 for early in &trigger.early_end {
-                    if trigger.use_regex && !early.contains("{C}") {
+                    // Skip `${1}` patterns — those substitute timer-start captures at match time.
+                    if trigger.use_regex
+                        && !early.contains("{C}")
+                        && !has_unexpanded_capture(early)
+                    {
                         if let Ok(re) = Regex::new(early) {
                             early_regexes.push(re);
                         }
@@ -424,32 +442,59 @@ impl TriggerEngine {
             if compiled.trigger.early_end.is_empty() {
                 continue;
             }
-            let matched = if compiled.trigger.use_regex {
-                compiled
-                    .early_regexes
-                    .iter()
-                    .any(|re| re.is_match(action))
-            } else {
-                compiled
-                    .trigger
-                    .early_end
-                    .iter()
-                    .any(|s| !s.is_empty() && action.contains(s.as_str()))
-            };
-            if !matched {
-                continue;
-            }
             let timer_name = compiled
                 .trigger
                 .timer_name
                 .clone()
                 .unwrap_or_else(|| compiled.trigger.name.clone());
-            // Don't expand early-end regex captures into timer names — alternation
-            // groups like (f|fs) would corrupt "Mesmerize - ${1}". Worn-off lines
-            // also omit the mob; clear by soonest matching prefix instead.
-            for id in timer_ids_to_clear(&self.timers, &timer_name, None) {
-                if !cleared.contains(&id) {
-                    cleared.push(id);
+
+            // Plain early-ends (worn-off, etc.): no GINA capture tokens.
+            let matched_plain = if compiled.trigger.use_regex {
+                compiled.early_regexes.iter().any(|re| re.is_match(action))
+            } else {
+                compiled
+                    .trigger
+                    .early_end
+                    .iter()
+                    .filter(|s| !s.is_empty() && !has_unexpanded_capture(s))
+                    .any(|s| action.contains(s.as_str()))
+            };
+            if matched_plain {
+                // Don't expand early-end regex captures into timer names — alternation
+                // groups like (f|fs) would corrupt "Mesmerize - ${1}". Worn-off lines
+                // also omit the mob; clear by soonest matching prefix instead.
+                for id in timer_ids_to_clear(&self.timers, &timer_name, None) {
+                    if !cleared.contains(&id) {
+                        cleared.push(id);
+                    }
+                }
+            }
+
+            // GINA `${1}` early-ends (e.g. slain): substitute captures from timer start.
+            for early in &compiled.trigger.early_end {
+                if early.is_empty() || !has_unexpanded_capture(early) {
+                    continue;
+                }
+                for timer in &self.timers {
+                    if timer.trigger_id != compiled.trigger.id {
+                        continue;
+                    }
+                    let caps = early_end_captures(timer, &timer_name);
+                    if caps.is_empty() {
+                        continue;
+                    }
+                    if !early_end_pattern_matches(
+                        early,
+                        compiled.trigger.use_regex,
+                        action,
+                        &character,
+                        &caps,
+                    ) {
+                        continue;
+                    }
+                    if !cleared.contains(&timer.id) {
+                        cleared.push(timer.id.clone());
+                    }
                 }
             }
         }
@@ -504,7 +549,8 @@ impl TriggerEngine {
             }
 
             // Debounce noisy combat spam (range / LOS while autoattacking).
-            // Timer triggers skip debounce so multi-mob mez lands can all start clocks.
+            // Timer triggers still run so multi-mob mez clocks start; toast/TTS
+            // for the same timer name is debounced after the name is known.
             let is_timer = compiled.trigger.timer_seconds.unwrap_or(0) > 0;
             if !is_timer {
                 let debounce_ms = if compiled.trigger.id.contains("out-of-range")
@@ -519,14 +565,21 @@ impl TriggerEngine {
                         continue;
                     }
                 }
+                self.last_fire_ms
+                    .insert(compiled.trigger.id.clone(), now);
             }
-            self.last_fire_ms
-                .insert(compiled.trigger.id.clone(), now);
 
+            let has_explicit_display = compiled
+                .trigger
+                .display_text
+                .as_deref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false);
             let display_template = compiled
                 .trigger
                 .display_text
                 .as_deref()
+                .filter(|s| !s.trim().is_empty())
                 .unwrap_or(&compiled.trigger.name);
             let display = expand_tokens(
                 display_template,
@@ -536,7 +589,7 @@ impl TriggerEngine {
             );
 
             // TTS by default. Speak text falls back to toast/name when empty.
-            let speak = if compiled.trigger.tts_enabled {
+            let mut speak = if compiled.trigger.tts_enabled {
                 let template = compiled
                     .trigger
                     .speak
@@ -554,7 +607,7 @@ impl TriggerEngine {
             };
 
             // Chime only when TTS is off (sound mode).
-            let sound = if !compiled.trigger.tts_enabled {
+            let mut sound = if !compiled.trigger.tts_enabled {
                 let s = compiled
                     .trigger
                     .sound
@@ -567,6 +620,7 @@ impl TriggerEngine {
             };
 
             let mut started_timer = None;
+            let mut suppress_notice = false;
             if let Some(secs) = compiled.trigger.timer_seconds {
                 if secs > 0 {
                     let mut secs = secs;
@@ -594,6 +648,18 @@ impl TriggerEngine {
                         action,
                         caps_owned.as_deref(),
                     );
+
+                    // EQL often logs miss+hit for one kick. Refresh the clock but
+                    // don't toast/TTS again for the same cooldown name.
+                    let notice_key =
+                        format!("timer:{}:{}", compiled.trigger.id, timer_name);
+                    if let Some(prev) = self.last_fire_ms.get(&notice_key) {
+                        if now.saturating_sub(*prev) < ALERT_DEBOUNCE_MS {
+                            suppress_notice = true;
+                        }
+                    }
+                    self.last_fire_ms.insert(notice_key, now);
+
                     // Restart same-named timers (GINA-ish default).
                     self.timers.retain(|t| t.name != timer_name);
                     let timer = ActiveTimer {
@@ -603,6 +669,7 @@ impl TriggerEngine {
                         started_ms: now,
                         ends_ms: now + secs * 1000,
                         duration_secs: secs,
+                        captures: caps_owned.clone().unwrap_or_default(),
                     };
                     self.next_alert_id += 1;
                     started_timer = Some(timer.clone());
@@ -610,40 +677,56 @@ impl TriggerEngine {
                 }
             }
 
+            if suppress_notice {
+                speak = None;
+                sound = None;
+            }
+
             let speak_useful = speak
                 .as_ref()
                 .map(|s| !s.trim().is_empty())
                 .unwrap_or(false);
-            let display_useful = !display.trim().is_empty();
+            // Timer bars are enough for cooldown clocks; only toast when the
+            // trigger set an explicit display line (e.g. YOU DIED).
+            let show_toast = if started_timer.is_some() {
+                has_explicit_display && !suppress_notice
+            } else {
+                !display.trim().is_empty() && !suppress_notice
+            };
             let sound_useful = sound
                 .as_ref()
                 .map(|s| !s.eq_ignore_ascii_case("none"))
                 .unwrap_or(false);
             // Silent match (e.g. Dazzle cast track / early-end-only helper).
-            if started_timer.is_none() && !speak_useful && !display_useful && !sound_useful {
+            if started_timer.is_none() && !speak_useful && !show_toast && !sound_useful {
                 continue;
             }
 
-            let alert = FiredAlert {
-                id: format!("a{}", self.next_alert_id),
-                trigger_id: compiled.trigger.id.clone(),
-                trigger_name: compiled.trigger.name.clone(),
-                kind: if started_timer.is_some() {
-                    "timer".to_string()
-                } else {
-                    "text".to_string()
-                },
-                text: display,
-                at_ms: now,
+            let alert = if show_toast {
+                let alert = FiredAlert {
+                    id: format!("a{}", self.next_alert_id),
+                    trigger_id: compiled.trigger.id.clone(),
+                    trigger_name: compiled.trigger.name.clone(),
+                    kind: if started_timer.is_some() {
+                        "timer".to_string()
+                    } else {
+                        "text".to_string()
+                    },
+                    text: display,
+                    at_ms: now,
+                };
+                self.next_alert_id += 1;
+                self.recent_alerts.insert(0, alert.clone());
+                if self.recent_alerts.len() > 40 {
+                    self.recent_alerts.truncate(40);
+                }
+                Some(alert)
+            } else {
+                None
             };
-            self.next_alert_id += 1;
-            self.recent_alerts.insert(0, alert.clone());
-            if self.recent_alerts.len() > 40 {
-                self.recent_alerts.truncate(40);
-            }
 
             actions.push(MatchAction {
-                alert: Some(alert),
+                alert,
                 sound: if sound_useful { sound } else { None },
                 speak: if speak_useful { speak } else { None },
                 started_timer,
@@ -699,6 +782,7 @@ impl TriggerEngine {
             started_ms: now,
             ends_ms: now + remaining * 1000,
             duration_secs,
+            captures: vec![],
         };
         self.next_alert_id += 1;
         self.timers.push(timer.clone());
@@ -777,6 +861,59 @@ fn expand_tokens(
     }
 
     out
+}
+
+/// Expand capture tokens into a regex pattern, escaping substituted values.
+fn expand_tokens_for_regex(
+    template: &str,
+    character: &str,
+    action: &str,
+    captures: &[String],
+) -> String {
+    let escaped: Vec<String> = captures.iter().map(|c| regex::escape(c)).collect();
+    expand_tokens(template, character, action, Some(&escaped))
+}
+
+fn early_end_captures(timer: &ActiveTimer, template: &str) -> Vec<String> {
+    if !timer.captures.is_empty() {
+        return timer.captures.clone();
+    }
+    timer_captures_from_name(template, &timer.name).unwrap_or_default()
+}
+
+fn early_end_pattern_matches(
+    pattern: &str,
+    use_regex: bool,
+    action: &str,
+    character: &str,
+    captures: &[String],
+) -> bool {
+    if use_regex {
+        let expanded = expand_tokens_for_regex(pattern, character, action, captures);
+        if has_unexpanded_capture(&expanded) {
+            return false;
+        }
+        return Regex::new(&expanded)
+            .ok()
+            .map(|re| re.is_match(action))
+            .unwrap_or(false);
+    }
+    let expanded = expand_tokens(pattern, character, action, Some(captures));
+    !expanded.is_empty() && action.contains(&expanded)
+}
+
+/// Infer `${1}` from timer display names like "Immo - a goblin".
+fn timer_captures_from_name(template: &str, name: &str) -> Option<Vec<String>> {
+    let prefix = timer_clear_prefix(template);
+    if prefix.is_empty() {
+        return None;
+    }
+    let sep = format!("{prefix} - ");
+    let rest = name.strip_prefix(&sep)?;
+    if rest.is_empty() {
+        return None;
+    }
+    Some(vec![rest.to_string()])
 }
 
 fn has_unexpanded_capture(name: &str) -> bool {
@@ -1033,6 +1170,46 @@ mod tests {
     }
 
     #[test]
+    fn slain_early_end_clears_matching_mob_timer() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "G".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "immo".into(),
+                    name: "Immolate".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) is immolated by flame\.$".into(),
+                    use_regex: true,
+                    display_text: Some("".into()),
+                    timer_seconds: Some(60),
+                    timer_name: Some("Immo - ${1}".into()),
+                    early_end: vec![
+                        r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$".into(),
+                    ],
+                    sound: Some("none".into()),
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action("a goblin is immolated by flame.");
+        engine.process_action("a beetle is immolated by flame.");
+        assert_eq!(engine.snapshot().timers.len(), 2);
+
+        engine.process_action("a goblin has been slain by Labn!");
+        let left = engine.snapshot().timers;
+        assert_eq!(left.len(), 1);
+        assert_eq!(left[0].name, "Immo - a beetle");
+
+        engine.process_action("You have slain a beetle!");
+        assert!(engine.snapshot().timers.is_empty());
+    }
+
+    #[test]
     fn dazzle_cast_overrides_mesmerize_land_duration() {
         let lib = TriggerLibrary {
             groups: vec![TriggerGroup {
@@ -1235,5 +1412,95 @@ mod tests {
             + 999)
             / 1000;
         assert_eq!(left, 14 * 60 + 59);
+    }
+
+    fn flying_kick_trigger() -> Trigger {
+        Trigger {
+            id: "24fc739023d9-2".into(),
+            name: "Flying Kick Cooldown".into(),
+            enabled: true,
+            search: "(You kick .+? for \\d+ poin(t|ts) of damage.|You try to kick .+?, but (miss|(.+? (ripostes|dodges|parries)|.+?'s magical skin absorbs the blow))!)".into(),
+            use_regex: true,
+            display_text: None,
+            timer_seconds: Some(4),
+            timer_name: Some("Flying Kick!".into()),
+            early_end: vec![],
+            sound: None,
+            speak: Some("Flying Kick Cooldown".into()),
+            tts_enabled: true,
+            comments: None,
+        }
+    }
+
+    #[test]
+    fn kick_miss_then_hit_speaks_once_and_no_toast() {
+        // EQL logs miss + hit for one Flying Kick; only one callout / timer.
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "monk".into(),
+                name: "Monk".into(),
+                enabled: true,
+                triggers: vec![flying_kick_trigger()],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+
+        let miss = engine
+            .process_action("You try to kick a vis ghoul knight, but miss!");
+        assert_eq!(miss.len(), 1);
+        assert!(miss[0].alert.is_none(), "cooldown clocks use the timer bar");
+        assert_eq!(miss[0].speak.as_deref(), Some("Flying Kick Cooldown"));
+        assert_eq!(
+            miss[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Flying Kick!")
+        );
+
+        let hit = engine.process_action(
+            "You kick a vis ghoul knight for 161 points of damage. (Critical)",
+        );
+        assert_eq!(hit.len(), 1);
+        assert!(hit[0].alert.is_none());
+        assert!(hit[0].speak.is_none(), "second line must not TTS again");
+        assert_eq!(
+            hit[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Flying Kick!")
+        );
+        assert_eq!(engine.snapshot().timers.len(), 1);
+        assert!(engine.snapshot().recent_alerts.is_empty());
+    }
+
+    #[test]
+    fn different_timer_names_still_announce() {
+        // Multi-mob mez: each target is a different timer name → each speaks.
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "G".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "mez".into(),
+                    name: "Mesmerize".into(),
+                    enabled: true,
+                    search: r"^(.+) has been mesmerized\.$".into(),
+                    use_regex: true,
+                    display_text: Some("Mezzed ${1}".into()),
+                    timer_seconds: Some(24),
+                    timer_name: Some("Mesmerize - ${1}".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: Some("Mesmerize on ${1}".into()),
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        let a = engine.process_action("a beetle has been mesmerized.");
+        let b = engine.process_action("a rat has been mesmerized.");
+        assert_eq!(a[0].speak.as_deref(), Some("Mesmerize on a beetle"));
+        assert_eq!(b[0].speak.as_deref(), Some("Mesmerize on a rat"));
+        assert_eq!(a[0].alert.as_ref().map(|x| x.text.as_str()), Some("Mezzed a beetle"));
+        assert_eq!(b[0].alert.as_ref().map(|x| x.text.as_str()), Some("Mezzed a rat"));
+        assert_eq!(engine.snapshot().timers.len(), 2);
     }
 }

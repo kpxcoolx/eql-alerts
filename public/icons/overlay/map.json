@@ -9,6 +9,8 @@
     "Enrage soon": "icon-enrage.png",
     "Rage over": "icon-enrage.png",
     "YOU DIED": "icon-death.png",
+    "PET DIED": "icon-death.png",
+    "PET LOW HEALTH": "icon-alert.png",
     "STUNNED": "icon-stun.png",
     "Invis fading": "icon-fades.png",
     "Invis faded": "icon-fades.png",
@@ -17,7 +19,8 @@
   "byTimerName": {
     "Death": "icon-death.png",
     "Stunned": "icon-stun.png",
-    "Low Health": "icon-alert.png"
+    "Low Health": "icon-alert.png",
+    "Low Pet Health": "icon-alert.png"
   },
   "byGroupHint": {
     "Zoning": "icon-zoning.png",

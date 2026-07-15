@@ -73,8 +73,9 @@ fn apply_audio_output(settings: &AppSettings) {
 use eql_compat::strip_permanent_buff_timers;
 use starter::{
     ensure_essentials, apply_gameplay_essentials_defaults, demote_optional_essentials,
-    ensure_default_tts, ensure_eql_ability_timers, ensure_eql_mez_timers, is_placeholder_library,
-    starter_pack, starter_stats,
+    ensure_default_tts, ensure_eql_ability_timers, ensure_eql_disease_dot_timers,
+    ensure_eql_mez_timers, ensure_shaman_warnings, is_placeholder_library, starter_pack,
+    starter_stats,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -158,7 +159,13 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
     if ensure_eql_ability_timers(&mut parsed) > 0 {
         dirty = true;
     }
+    if ensure_shaman_warnings(&mut parsed) > 0 {
+        dirty = true;
+    }
     if ensure_eql_mez_timers(&mut parsed) > 0 {
+        dirty = true;
+    }
+    if ensure_eql_disease_dot_timers(&mut parsed) > 0 {
         dirty = true;
     }
     // One-shot: Combat/Danger/Fades/Social were force-armed — demote to opt-in.

@@ -14,7 +14,9 @@ pub fn starter_pack() -> TriggerLibrary {
     strip_permanent_buff_timers(&mut pack);
 
     ensure_essentials(&mut pack);
+    let _ = ensure_shaman_warnings(&mut pack);
     let _ = ensure_eql_mez_timers(&mut pack);
+    let _ = ensure_eql_disease_dot_timers(&mut pack);
     let _ = ensure_default_tts(&mut pack);
     pack
 }
@@ -148,14 +150,14 @@ fn essentials_groups() -> Vec<TriggerGroup> {
                     vec![],
                     None,
                 ),
-                t(
+                t_regex(
                     "eql-essentials-fizzle",
                     "Spell fizzle",
-                    "spell fizzles!",
+                    r"^Your(?: .+)? spell fizzles!$",
                     Some("Fizzle"),
                     Some("Fizzle"),
                     Some("tink"),
-                    Some("EQL: Your <Spell> spell fizzles!"),
+                    Some("Only your fizzles — classic Your spell fizzles! and EQL Your <Spell> spell fizzles!"),
                 ),
                 t_regex(
                     "eql-essentials-oom",
@@ -177,6 +179,18 @@ fn essentials_groups() -> Vec<TriggerGroup> {
                     "Low Health",
                     vec![],
                     Some("Classic EQ low-HP warning"),
+                ),
+                t_timer(
+                    "eql-essentials-low-pet-health",
+                    "Low pet health",
+                    "I have 50 percent of my hit points left",
+                    Some("PET LOW HEALTH"),
+                    Some("Pet low health"),
+                    Some("submarine"),
+                    5,
+                    "Low Pet Health",
+                    vec![],
+                    Some("Pet HP report at 50% (classic /pet health line)"),
                 ),
                 t_regex(
                     "eql-essentials-pet-died",
@@ -203,14 +217,14 @@ fn essentials_groups() -> Vec<TriggerGroup> {
             name: "EQL Essentials / Combat".to_string(),
             enabled: true,
             triggers: vec![
-                t(
+                t_regex(
                     "eql-essentials-interrupted",
                     "Spell interrupted",
-                    "spell is interrupted",
+                    r"^Your(?: .+)? spell is interrupted\.$",
                     Some("Interrupted"),
                     Some("Interrupted"),
                     None,
-                    Some("Matches classic and EQL “Your <Spell> spell is interrupted” lines"),
+                    Some("Only your interrupts — classic Your spell is interrupted. and EQL Your <Spell> spell is interrupted."),
                 ),
                 t(
                     "eql-essentials-did-not-take",
@@ -628,9 +642,33 @@ pub fn ensure_eql_ability_timers(library: &mut TriggerLibrary) -> usize {
         for trigger in &mut group.triggers {
             if trigger.id == "eql-essentials-interrupted" {
                 let before = serde_json::to_string(trigger).unwrap_or_default();
+                // Old plain "spell is interrupted" matched every NPC/player interrupt in zone.
+                if trigger.search == "spell is interrupted" {
+                    trigger.search = r"^Your(?: .+)? spell is interrupted\.$".to_string();
+                    trigger.use_regex = true;
+                    trigger.comments = Some(
+                        "Only your interrupts — classic Your spell is interrupted. and EQL Your <Spell> spell is interrupted."
+                            .to_string(),
+                    );
+                }
                 trigger.speak = Some("Interrupted".to_string());
                 trigger.display_text = Some("Interrupted".to_string());
                 trigger.sound = None;
+                let after = serde_json::to_string(trigger).unwrap_or_default();
+                if before != after {
+                    changed += 1;
+                }
+            }
+            if trigger.id == "eql-essentials-fizzle" {
+                let before = serde_json::to_string(trigger).unwrap_or_default();
+                if trigger.search == "spell fizzles!" {
+                    trigger.search = r"^Your(?: .+)? spell fizzles!$".to_string();
+                    trigger.use_regex = true;
+                    trigger.comments = Some(
+                        "Only your fizzles — classic Your spell fizzles! and EQL Your <Spell> spell fizzles!"
+                            .to_string(),
+                    );
+                }
                 let after = serde_json::to_string(trigger).unwrap_or_default();
                 if before != after {
                     changed += 1;
@@ -663,6 +701,79 @@ pub fn ensure_eql_ability_timers(library: &mut TriggerLibrary) -> usize {
         }
     }
     changed
+}
+
+/// Add shaman slow/malo land + resist alerts if the Warnings group is missing them.
+pub fn ensure_shaman_warnings(library: &mut TriggerLibrary) -> usize {
+    let fresh = shaman_warning_triggers();
+    let Some(idx) = library.groups.iter().position(|g| {
+        g.id == "class-b61ac75a50"
+            || g.name == "Classes / Shaman / Warnings"
+            || g.name.contains("Shaman / Warnings")
+    }) else {
+        return 0;
+    };
+
+    let mut changed = 0usize;
+    let existing = &mut library.groups[idx];
+    for trigger in fresh {
+        if existing.triggers.iter().any(|t| t.id == trigger.id) {
+            continue;
+        }
+        // Insert land/resist before matching wore-off so alerts read in cast order.
+        let insert_at = existing
+            .triggers
+            .iter()
+            .position(|t| {
+                (trigger.id.contains("slow") && t.id == "837cfbac69da-0")
+                    || (trigger.id.contains("malo") && t.id == "837cfbac69da-1")
+            })
+            .unwrap_or(existing.triggers.len());
+        existing.triggers.insert(insert_at, trigger);
+        changed += 1;
+    }
+    changed
+}
+
+fn shaman_warning_triggers() -> Vec<Trigger> {
+    vec![
+        t_regex(
+            "eql-shm-slow-landed",
+            "Slowed",
+            r"^([\w -'`]+)(?: yawns|'s motions slow as a plague of insects chews at their skin)\.$",
+            Some("${1} Slowed"),
+            Some("${1} Slowed"),
+            None,
+            Some("Turgur's / Insects / Walking Sleep land, or Plague of Insects"),
+        ),
+        t_regex(
+            "eql-shm-slow-resisted",
+            "Slow Resisted",
+            r"^Your target resisted the (Walking Sleep|.+? Insects) spell\.$",
+            Some("Slow resisted"),
+            Some("Slow resisted"),
+            None,
+            None,
+        ),
+        t_regex(
+            "eql-shm-malo-landed",
+            "Maloed",
+            r"^([\w -'`]+) looks very uncomfortable\.$",
+            Some("${1} Maloed"),
+            Some("${1} Maloed"),
+            None,
+            Some("Malo / Malosini / Malise land"),
+        ),
+        t_regex(
+            "eql-shm-malo-resisted",
+            "Malo Resisted",
+            r"^Your target resisted the Mal(ise|aisement|osi|o|osini) spell\.$",
+            Some("Malo resisted"),
+            Some("Malo resisted"),
+            None,
+            None,
+        ),
+    ]
 }
 
 /// Align Enchanter mez durations / early-ends with EverQuest Legends wiki values.
@@ -761,6 +872,50 @@ fn ensure_early_end(trigger: &mut Trigger, pattern: &str) {
     if !trigger.early_end.iter().any(|e| e == pattern) {
         trigger.early_end.insert(0, pattern.to_string());
     }
+}
+
+/// Scourge/Sicken/Plague share "sweats and shivers, looking feverish."
+/// Match your land hit instead so other casters' DoTs don't start clocks.
+pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
+    let mut changed = 0usize;
+    for group in &mut library.groups {
+        for trigger in &mut group.triggers {
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            let name = trigger.name.as_str();
+            let uses_shared_fever =
+                trigger.search.contains("sweats and shivers, looking feverish");
+
+            if name == "Scourge" && uses_shared_fever {
+                trigger.search =
+                    r"^You hit ([\w -'`]+) for \d+ points of disease damage by Scourge\.$"
+                        .into();
+                trigger.use_regex = true;
+                if trigger.comments.is_none() {
+                    trigger.comments = Some(
+                        "EQL: match your land hit — feverish line is shared with Sicken/Plague"
+                            .into(),
+                    );
+                }
+            } else if name == "Plague" && uses_shared_fever {
+                trigger.search =
+                    r"^You hit ([\w -'`]+) for \d+ points of disease damage by Plague\.$"
+                        .into();
+                trigger.use_regex = true;
+                if trigger.comments.is_none() {
+                    trigger.comments = Some(
+                        "EQL: match your land hit — feverish line is shared with Sicken/Scourge"
+                            .into(),
+                    );
+                }
+            }
+
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+    }
+    changed
 }
 
 /// Fill missing speak lines so every trigger can announce via TTS by default.
@@ -891,6 +1046,24 @@ mod tests {
         assert!(oom.use_regex);
         assert!(oom.search.starts_with('^'));
 
+        let low_pet = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.id == "eql-essentials-low-pet-health")
+            .expect("low pet health");
+        assert!(low_pet.enabled);
+        assert!(low_pet.search.contains("50 percent"));
+        assert_eq!(low_pet.speak.as_deref(), Some("Pet low health"));
+        let pet_died = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.id == "eql-essentials-pet-died")
+            .expect("pet died");
+        assert!(pet_died.enabled);
+        assert!(pet_died.search.contains("{C}"));
+
         let kintaz = pack
             .groups
             .iter()
@@ -916,6 +1089,66 @@ mod tests {
             .find(|t| t.id == "eql-dazzle-mez")
             .expect("dazzle");
         assert_eq!(dazzle.timer_name.as_deref(), Some("Dazzle - ${1}"));
+
+        let shm = pack
+            .groups
+            .iter()
+            .find(|g| g.name == "Classes / Shaman / Warnings")
+            .expect("shaman warnings");
+        let ids: Vec<_> = shm.triggers.iter().map(|t| t.id.as_str()).collect();
+        assert!(ids.contains(&"eql-shm-slow-landed"));
+        assert!(ids.contains(&"eql-shm-slow-resisted"));
+        assert!(ids.contains(&"eql-shm-malo-landed"));
+        assert!(ids.contains(&"eql-shm-malo-resisted"));
+    }
+
+    #[test]
+    fn ensure_shaman_warnings_fills_missing() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "class-b61ac75a50".into(),
+                name: "Classes / Shaman / Warnings".into(),
+                enabled: false,
+                triggers: vec![
+                    t_regex(
+                        "837cfbac69da-0",
+                        "Slow Wore Off",
+                        r"^Your (Walking Sleep|.+? Insects) spell has worn off\.$",
+                        Some("Slow off"),
+                        Some("Slow off"),
+                        None,
+                        None,
+                    ),
+                    t_regex(
+                        "837cfbac69da-1",
+                        "Malo Wore Off",
+                        r"^Your Mal(ise|aisement|osi|o|osini) spell has worn off\.$",
+                        Some("Malo off"),
+                        Some("Malo off"),
+                        None,
+                        None,
+                    ),
+                ],
+            }],
+        };
+        assert_eq!(ensure_shaman_warnings(&mut lib), 4);
+        assert_eq!(ensure_shaman_warnings(&mut lib), 0);
+        let names: Vec<_> = lib.groups[0]
+            .triggers
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "Slowed",
+                "Slow Resisted",
+                "Slow Wore Off",
+                "Maloed",
+                "Malo Resisted",
+                "Malo Wore Off",
+            ]
+        );
     }
 
     #[test]
@@ -1014,5 +1247,82 @@ mod tests {
             .find(|g| g.name == "EQL Essentials / Combat")
             .unwrap()
             .enabled);
+    }
+
+    #[test]
+    fn ensure_eql_disease_dot_timers_rewrites_shared_fever_line() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "dc9fed12dd5a-3".into(),
+                    name: "Scourge".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) sweats and shivers, looking feverish\.$".into(),
+                    use_regex: true,
+                    display_text: None,
+                    timer_seconds: Some(126),
+                    timer_name: Some("Scourge - ${1}".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 1);
+        assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 0);
+        let scourge = &lib.groups[0].triggers[0];
+        assert!(scourge.search.contains("by Scourge"));
+        assert!(!scourge.search.contains("feverish"));
+    }
+
+    #[test]
+    fn starter_scourge_ignores_other_casters_sicken() {
+        use crate::engine::TriggerEngine;
+
+        let scourge = Trigger {
+            id: "dc9fed12dd5a-3".into(),
+            name: "Scourge".into(),
+            enabled: true,
+            search: r"^You hit ([\w -'`]+) for \d+ points of disease damage by Scourge\.$"
+                .into(),
+            use_regex: true,
+            display_text: None,
+            timer_seconds: Some(126),
+            timer_name: Some("Scourge - ${1}".into()),
+            early_end: vec![],
+            sound: None,
+            speak: None,
+            tts_enabled: false,
+            comments: None,
+        };
+        let mut engine = TriggerEngine::new(TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Shaman DoTs".into(),
+                enabled: true,
+                triggers: vec![scourge],
+            }],
+        });
+
+        // Other player's Sicken land text used to start Scourge.
+        let false_pos = engine.process_action(
+            "A zol ghoul knight sweats and shivers, looking feverish.",
+        );
+        assert!(false_pos.is_empty());
+        assert!(engine.snapshot().timers.is_empty());
+
+        let yours = engine.process_action(
+            "You hit a zol ghoul knight for 69 points of disease damage by Scourge.",
+        );
+        assert_eq!(yours.len(), 1);
+        assert_eq!(
+            yours[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Scourge - a zol ghoul knight")
+        );
     }
 }

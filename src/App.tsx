@@ -102,6 +102,7 @@ export type ActiveTimer = {
   started_ms: number;
   ends_ms: number;
   duration_secs: number;
+  captures?: string[];
 };
 
 export type EngineState = {

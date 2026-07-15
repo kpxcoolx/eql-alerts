@@ -3058,7 +3058,7 @@
           "id": "b9910186fb08-2",
           "name": "Plague",
           "enabled": true,
-          "search": "^([\\w -'`]+) sweats and shivers, looking feverish\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of disease damage by Plague\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 132,
@@ -3069,7 +3069,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit — feverish line is shared with Sicken/Scourge"
         },
         {
           "id": "b9910186fb08-3",
@@ -4957,7 +4957,7 @@
           "id": "dc9fed12dd5a-3",
           "name": "Scourge",
           "enabled": true,
-          "search": "^([\\w -'`]+) sweats and shivers, looking feverish\\.$",
+          "search": "^You hit ([\\w -'`]+) for \\d+ points of disease damage by Scourge\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 126,
@@ -4969,7 +4969,7 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL: match your land hit — feverish line is shared with Sicken/Plague"
         },
         {
           "id": "dc9fed12dd5a-4",
@@ -5018,6 +5018,34 @@
       "enabled": false,
       "triggers": [
         {
+          "id": "eql-shm-slow-landed",
+          "name": "Slowed",
+          "enabled": true,
+          "search": "^([\\w -'`]+)(?: yawns|'s motions slow as a plague of insects chews at their skin)\\.$",
+          "use_regex": true,
+          "display_text": "${1} Slowed",
+          "timer_seconds": null,
+          "timer_name": null,
+          "early_end": [],
+          "sound": null,
+          "speak": "${1} Slowed",
+          "comments": "Turgur's / Insects / Walking Sleep land, or Plague of Insects"
+        },
+        {
+          "id": "eql-shm-slow-resisted",
+          "name": "Slow Resisted",
+          "enabled": true,
+          "search": "^Your target resisted the (Walking Sleep|.+? Insects) spell\\.$",
+          "use_regex": true,
+          "display_text": "Slow resisted",
+          "timer_seconds": null,
+          "timer_name": null,
+          "early_end": [],
+          "sound": null,
+          "speak": "Slow resisted",
+          "comments": null
+        },
+        {
           "id": "837cfbac69da-0",
           "name": "Slow Wore Off",
           "enabled": true,
@@ -5029,6 +5057,34 @@
           "early_end": [],
           "sound": null,
           "speak": "Slow off",
+          "comments": null
+        },
+        {
+          "id": "eql-shm-malo-landed",
+          "name": "Maloed",
+          "enabled": true,
+          "search": "^([\\w -'`]+) looks very uncomfortable\\.$",
+          "use_regex": true,
+          "display_text": "${1} Maloed",
+          "timer_seconds": null,
+          "timer_name": null,
+          "early_end": [],
+          "sound": null,
+          "speak": "${1} Maloed",
+          "comments": "Malo / Malosini / Malise land"
+        },
+        {
+          "id": "eql-shm-malo-resisted",
+          "name": "Malo Resisted",
+          "enabled": true,
+          "search": "^Your target resisted the Mal(ise|aisement|osi|o|osini) spell\\.$",
+          "use_regex": true,
+          "display_text": "Malo resisted",
+          "timer_seconds": null,
+          "timer_name": null,
+          "early_end": [],
+          "sound": null,
+          "speak": "Malo resisted",
           "comments": null
         },
         {

@@ -154,11 +154,21 @@ export default function Overlay() {
           </div>
           {!hasContent ? (
             <div className="empty-hint">
-              Timers and alerts show here. Drag to move · Click-through to play
-              through the overlay · Close to hide it · ⌘⇧U / Ctrl+Shift+U
-              restores edit mode (× dismisses a timer).
+              Timers and alerts show here. Drag the title to move · Drag the
+              corner to resize · Click-through to play through the overlay ·
+              Close to hide it · ⌘⇧U / Ctrl+Shift+U restores edit mode (×
+              dismisses a timer).
             </div>
           ) : null}
+          <div
+            className="resize-grip"
+            title="Drag to resize"
+            onMouseDown={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              void getCurrentWindow().startResizeDragging("SouthEast");
+            }}
+          />
         </div>
       ) : null}
 

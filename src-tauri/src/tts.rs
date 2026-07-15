@@ -827,6 +827,7 @@ pub fn warm_essential_callouts(voice_id: &str) {
             "Out of mana",
             "Fizzle",
             "Pet died",
+            "Pet low health",
             "Low health",
             "You died",
             "Enraged",

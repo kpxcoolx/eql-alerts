@@ -15,6 +15,7 @@ body,
 }
 
 .overlay {
+  position: relative;
   height: 100vh;
   padding: 10px;
   display: flex;
@@ -239,6 +240,43 @@ body,
   padding: 8px;
   line-height: 1.45;
   color: var(--ov-text-muted);
+}
+
+.resize-grip {
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  cursor: nwse-resize;
+  border-radius: 0 0 10px 0;
+  background:
+    linear-gradient(
+      135deg,
+      transparent 40%,
+      var(--ov-line-strong) 42%,
+      var(--ov-line-strong) 48%,
+      transparent 50%,
+      transparent 58%,
+      var(--ov-gold) 60%,
+      var(--ov-gold) 66%,
+      transparent 68%
+    );
+}
+
+.resize-grip:hover {
+  background:
+    linear-gradient(
+      135deg,
+      transparent 40%,
+      var(--ov-gold) 42%,
+      var(--ov-gold) 48%,
+      transparent 50%,
+      transparent 58%,
+      var(--ov-gold-hot) 60%,
+      var(--ov-gold-hot) 66%,
+      transparent 68%
+    );
 }
 
 @keyframes fadein {
