@@ -342,11 +342,15 @@ fn create_overlay_window(app: &AppHandle) -> Result<(), String> {
     });
 
     let url = WebviewUrl::App("overlay.html".into());
+    // shadow(false) removes the Windows glass/outline frame on transparent
+    // undecorated windows (DWM). Keep transparent so empty areas stay clear.
     WebviewWindowBuilder::new(app, "overlay", url)
         .title("EQL Alerts Overlay")
         .always_on_top(true)
         .decorations(false)
         .transparent(true)
+        .shadow(false)
+        .background_color(tauri::window::Color(0, 0, 0, 0))
         .resizable(true)
         .skip_taskbar(true)
         .visible(false)
