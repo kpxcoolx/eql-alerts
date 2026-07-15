@@ -518,22 +518,10 @@ fn play_file_helper(path: &Path, wait: bool, volume: f64, track_pid: bool) -> Re
 
     #[cfg(target_os = "windows")]
     {
-        let path_str = path.to_string_lossy().replace('\'', "''");
-        let mut child = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                &format!("$p = New-Object Media.SoundPlayer '{path_str}'; $p.PlaySync();"),
-            ])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .spawn()
-            .map_err(|e| format!("sound player: {e}"))?;
-        let _ = (volume, track_pid);
-        if wait {
-            let _ = child.wait();
-        }
-        return Ok(());
+        // Never spawn powershell/cmd for playback — that flashes console windows
+        // on every alert. Use in-process rodio instead.
+        let _ = track_pid;
+        return play_file_rodio(path, wait, volume);
     }
 
     #[cfg(not(any(target_os = "macos", target_os = "windows")))]
@@ -595,7 +583,7 @@ fn play_file_tracked(path: &Path, wait: bool, volume: f64, track_pid: bool) -> R
         return play_file_helper(path, wait, volume, track_pid);
     }
 
-    // WAV → WebView HTMLAudio; fallback to helpers.
+    // WAV → WebView HTMLAudio; fallback to in-process rodio (no shell/cmd).
     if is_wav(path) {
         match play_file_webview(path, wait, volume) {
             Ok(()) => return Ok(()),
@@ -611,11 +599,7 @@ fn play_file_tracked(path: &Path, wait: bool, volume: f64, track_pid: bool) -> R
         }
         #[cfg(not(target_os = "macos"))]
         {
-            match play_file_rodio(path, wait, volume) {
-                Ok(()) => return Ok(()),
-                Err(err) => tts_log(&format!("rodio failed ({err}), trying helper")),
-            }
-            return play_file_helper(path, wait, volume, track_pid);
+            return play_file_rodio(path, wait, volume);
         }
     }
 

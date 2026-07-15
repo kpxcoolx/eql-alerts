@@ -43,6 +43,10 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      - name: Pack Kokoro TTS for Windows installer
+        shell: pwsh
+        run: ./scripts/pack_kokoro_windows.ps1
+
       # Always create a DRAFT first. Publishing happens only after we verify
       # the NSIS installer + latest.json exist — never leave a broken "Latest".
       - name: Build Windows installer (draft release)
@@ -55,12 +59,13 @@ jobs:
           tagName: ${{ steps.ver.outputs.tag }}
           releaseName: EQL Alerts ${{ steps.ver.outputs.tag }}
           releaseBody: |
-            Windows installer for EQL Alerts.
+            Windows installer for EQL Alerts (includes Kokoro neural TTS).
 
             1. Run the NSIS `.exe` (current-user install; no admin required).
             2. Start EQL Alerts → **Find log** / **Browse…**.
             3. Open **Overlay** and use Ctrl+Shift+L for click-through.
 
+            First launch extracts TTS models into `%LOCALAPPDATA%` (one-time).
             After this build, use **Check for updates** for future releases.
           releaseDraft: true
           prerelease: false

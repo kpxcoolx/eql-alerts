@@ -8,6 +8,9 @@ src-tauri/target/
 tts-kokoro/.venv/
 tts-kokoro/models/
 tts-kokoro/uv.lock
+# Built by scripts/pack_kokoro_windows.ps1 for the Windows installer
+src-tauri/resources/tts-kokoro.zip
+src-tauri/resources/tts-kokoro-staging/
 # Local Windows GINA install (reference only — not source)
 GINA/
 __pycache__/

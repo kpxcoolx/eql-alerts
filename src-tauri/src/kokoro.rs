@@ -2,12 +2,20 @@
 
 use serde::Deserialize;
 use serde::Serialize;
+use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+/// Hide console window when spawning helper processes on Windows.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 static DAEMON: Mutex<Option<Child>> = Mutex::new(None);
 
@@ -21,11 +29,22 @@ pub struct KokoroVoice {
     pub locale: String,
 }
 
-fn helper_root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tts-kokoro")
+fn models_ready(root: &Path) -> bool {
+    root.join("models/kokoro-v1.0.onnx").exists()
+        && root.join("models/voices-v1.0.bin").exists()
+        && root.join("speak.py").exists()
 }
 
 fn python_bin(root: &Path) -> Option<PathBuf> {
+    // Packaged portable Python (python_relpath.txt written by pack_kokoro_windows.ps1).
+    let marker = root.join("python_relpath.txt");
+    if let Ok(rel) = std::fs::read_to_string(&marker) {
+        let p = root.join(rel.trim());
+        if p.exists() {
+            return Some(p);
+        }
+    }
+
     #[cfg(target_os = "windows")]
     {
         let p = root.join(".venv/Scripts/python.exe");
@@ -43,42 +62,185 @@ fn python_bin(root: &Path) -> Option<PathBuf> {
     None
 }
 
-fn models_ready(root: &Path) -> bool {
-    root.join("models/kokoro-v1.0.onnx").exists()
-        && root.join("models/voices-v1.0.bin").exists()
-        && root.join("speak.py").exists()
+fn root_ready(root: &Path) -> bool {
+    python_bin(root).is_some() && models_ready(root)
+}
+
+/// Writable install location for the packaged Kokoro zip (Windows NSIS/Mac).
+fn extracted_root() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(base) = std::env::var("LOCALAPPDATA") {
+            return PathBuf::from(base)
+                .join("com.eqlegends.alerts")
+                .join("tts-kokoro");
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(home) = std::env::var("HOME") {
+            return PathBuf::from(home)
+                .join("Library/Application Support/com.eqlegends.alerts/tts-kokoro");
+        }
+    }
+    std::env::temp_dir().join("eql-alerts-tts-kokoro")
+}
+
+fn pack_zip_candidates() -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    out.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tts-kokoro.zip"));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            out.push(dir.join("resources/tts-kokoro.zip"));
+            out.push(dir.join("tts-kokoro.zip"));
+            // macOS .app: Contents/MacOS → Contents/Resources
+            out.push(dir.join("../Resources/resources/tts-kokoro.zip"));
+            out.push(dir.join("../Resources/tts-kokoro.zip"));
+        }
+    }
+    out
+}
+
+fn find_pack_zip() -> Option<PathBuf> {
+    pack_zip_candidates().into_iter().find(|p| p.exists())
+}
+
+fn find_ready_root() -> Option<PathBuf> {
+    let mut candidates = Vec::new();
+    // Dev / already-unpacked bundle dirs (not the versioned LocalAppData extract).
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tts-kokoro"));
+    candidates.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("resources/tts-kokoro"));
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("resources/tts-kokoro"));
+            candidates.push(dir.join("tts-kokoro"));
+            candidates.push(dir.join("../Resources/resources/tts-kokoro"));
+            candidates.push(dir.join("../Resources/tts-kokoro"));
+        }
+    }
+    candidates.into_iter().find(|p| root_ready(p))
+}
+
+fn extract_current(root: &Path) -> bool {
+    match std::fs::read_to_string(root.join(".pack-version")) {
+        Ok(v) => v.trim() == env!("CARGO_PKG_VERSION") && root_ready(root),
+        Err(_) => false,
+    }
+}
+
+fn extract_pack_zip(zip_path: &Path, dest: &Path) -> Result<(), String> {
+    // Replace any previous extract so upgrades get a fresh Python/models tree.
+    if dest.exists() {
+        std::fs::remove_dir_all(dest).map_err(|e| format!("clear kokoro extract: {e}"))?;
+    }
+    std::fs::create_dir_all(dest).map_err(|e| format!("create kokoro extract: {e}"))?;
+
+    let file = std::fs::File::open(zip_path).map_err(|e| format!("open kokoro zip: {e}"))?;
+    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("kokoro zip: {e}"))?;
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("kokoro zip entry: {e}"))?;
+        let Some(rel) = entry.enclosed_name() else {
+            continue;
+        };
+        let out_path = dest.join(&rel);
+        if entry.is_dir() {
+            std::fs::create_dir_all(&out_path).map_err(|e| format!("kokoro zip mkdir: {e}"))?;
+            continue;
+        }
+        if let Some(parent) = out_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|e| format!("kokoro zip mkdir: {e}"))?;
+        }
+        let mut out =
+            std::fs::File::create(&out_path).map_err(|e| format!("kokoro zip write: {e}"))?;
+        std::io::copy(&mut entry, &mut out).map_err(|e| format!("kokoro zip copy: {e}"))?;
+    }
+
+    std::fs::write(dest.join(".pack-version"), env!("CARGO_PKG_VERSION"))
+        .map_err(|e| format!("kokoro pack version: {e}"))?;
+
+    if !root_ready(dest) {
+        return Err(format!(
+            "Kokoro pack extracted but incomplete at {}",
+            dest.display()
+        ));
+    }
+    Ok(())
+}
+
+/// Resolve a ready Kokoro tree, extracting the bundled zip on first run / upgrade.
+fn helper_root() -> Result<PathBuf, String> {
+    let extracted = extracted_root();
+    if extract_current(&extracted) {
+        return Ok(extracted);
+    }
+    // Packaged installer: (re)extract zip into LocalAppData so Python is writable & portable.
+    if let Some(zip) = find_pack_zip() {
+        extract_pack_zip(&zip, &extracted)?;
+        return Ok(extracted);
+    }
+    // Local checkout: use the repo tts-kokoro from setup_kokoro.*
+    if let Some(ready) = find_ready_root() {
+        return Ok(ready);
+    }
+    Err(
+        "Kokoro TTS not set up. Reinstall the app, or run scripts/setup_kokoro.sh (Mac) / scripts/setup_kokoro.bat (Windows)."
+            .into(),
+    )
 }
 
 pub fn is_available() -> bool {
-    let root = helper_root();
-    python_bin(&root).is_some() && models_ready(&root)
+    if extract_current(&extracted_root()) {
+        return true;
+    }
+    if find_pack_zip().is_some() {
+        return true;
+    }
+    find_ready_root().is_some()
 }
 
 fn http_get(path: &str, timeout_ms: u64) -> Result<String, String> {
-    let addr = format!("127.0.0.1:{KOKORO_PORT}");
-    let url = format!("http://{addr}{path}");
-    // Tiny blocking HTTP via curl — portable on Mac/Windows when curl is present.
-    let output = Command::new("curl")
-        .args([
-            "-sS",
-            "--fail",
-            "--max-time",
-            &format!("{}", (timeout_ms / 1000).max(1)),
-            &url,
-        ])
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .output()
-        .map_err(|e| format!("curl: {e}"))?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        return Err(format!("kokoro http failed: {err}"));
+    // Plain TCP HTTP — avoid `curl` on Windows, which flashes a console per request
+    // (ensure_daemon polls health in a tight loop at startup).
+    let addr: SocketAddr = format!("127.0.0.1:{KOKORO_PORT}")
+        .parse()
+        .map_err(|e| format!("kokoro addr: {e}"))?;
+    let timeout = Duration::from_millis(timeout_ms.max(1));
+    let mut stream =
+        TcpStream::connect_timeout(&addr, timeout).map_err(|e| format!("kokoro connect: {e}"))?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|e| format!("kokoro read timeout: {e}"))?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|e| format!("kokoro write timeout: {e}"))?;
+
+    let req = format!(
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1:{KOKORO_PORT}\r\nConnection: close\r\n\r\n"
+    );
+    stream
+        .write_all(req.as_bytes())
+        .map_err(|e| format!("kokoro write: {e}"))?;
+
+    let mut buf = Vec::new();
+    stream
+        .read_to_end(&mut buf)
+        .map_err(|e| format!("kokoro read: {e}"))?;
+    let raw = String::from_utf8_lossy(&buf);
+    let Some((header, body)) = raw.split_once("\r\n\r\n") else {
+        return Err("kokoro http bad reply".into());
+    };
+    let status_ok = header.starts_with("HTTP/1.1 200") || header.starts_with("HTTP/1.0 200");
+    if !status_ok {
+        let status_line = header.lines().next().unwrap_or("?");
+        return Err(format!("kokoro http failed: {status_line}"));
     }
-    let body = String::from_utf8_lossy(&output.stdout).into_owned();
-    if body.trim().is_empty() {
+    let body = body.trim();
+    if body.is_empty() {
         return Err("kokoro http empty reply".into());
     }
-    Ok(body)
+    Ok(body.to_owned())
 }
 
 fn port_open() -> bool {
@@ -138,13 +300,7 @@ pub fn ensure_daemon() -> Result<(), String> {
         thread::sleep(Duration::from_millis(150));
     }
 
-    if !is_available() {
-        return Err(
-            "Kokoro TTS not set up. Run scripts/setup_kokoro.sh (Mac) or scripts/setup_kokoro.bat (Windows)."
-                .into(),
-        );
-    }
-    let root = helper_root();
+    let root = helper_root()?;
     let py = python_bin(&root).ok_or("Kokoro python missing")?;
     let script = root.join("speak.py");
 
@@ -155,12 +311,17 @@ pub fn ensure_daemon() -> Result<(), String> {
         }
     }
 
-    let child = Command::new(&py)
-        .arg(&script)
+    let mut cmd = Command::new(&py);
+    cmd.arg(&script)
         .args(["serve", "--host", "127.0.0.1", "--port", &KOKORO_PORT.to_string()])
         .current_dir(&root)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+    let child = cmd
         .spawn()
         .map_err(|e| format!("start kokoro daemon: {e}"))?;
     *guard = Some(child);
