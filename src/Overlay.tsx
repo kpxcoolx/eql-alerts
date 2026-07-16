@@ -90,7 +90,7 @@ export default function Overlay() {
   }, [modeHint]);
 
   async function enableClickThrough() {
-    setModeHint("Click-through on — ⌘⇧U (Ctrl+Shift+U) to edit again");
+    setModeHint("Click-through on — ⌘⌥U (Ctrl+Alt+U) to edit again");
     try {
       await invoke("set_overlay_click_through", { enabled: true });
     } catch (err) {
@@ -127,7 +127,7 @@ export default function Overlay() {
             <div className="drag-actions">
               <button
                 type="button"
-                title="Clicks pass through to the game. Use ⌘⇧U / Ctrl+Shift+U to edit again."
+                title="Clicks pass through to the game. Use ⌘⌥U / Ctrl+Alt+U to edit again."
                 onMouseDown={(e) => e.stopPropagation()}
                 onClick={(e) => {
                   e.preventDefault();
@@ -156,7 +156,7 @@ export default function Overlay() {
             <div className="empty-hint">
               Timers and alerts show here. Drag the title to move · Drag the
               corner to resize · Click-through to play through the overlay ·
-              Close to hide it · ⌘⇧U / Ctrl+Shift+U restores edit mode · click
+              Close to hide it · ⌘⌥U / Ctrl+Alt+U restores edit mode · click
               a timer to clear it.
             </div>
           ) : null}

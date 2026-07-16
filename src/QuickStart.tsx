@@ -16,7 +16,7 @@ const STEPS: Step[] = [
   },
   {
     title: "Open the overlay",
-    body: "Overlay shows toasts and countdown timers on top of the game. Place it where you like, then use Ctrl/Cmd+Shift+L for click-through so you can play through it, and Ctrl/Cmd+Shift+U to edit it again. Close hides it; open again from the main window.",
+    body: "Overlay shows toasts and countdown timers on top of the game. Place it where you like, then use Ctrl/Cmd+Alt+L for click-through so you can play through it, and Ctrl/Cmd+Alt+U to edit it again. Close hides it; open again from the main window.",
   },
 ];
 

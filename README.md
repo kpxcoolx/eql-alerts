@@ -51,8 +51,8 @@ There is no Mac installer yet — Mac is for dogfooding via `tauri:dev`, same as
 
 | Shortcut | Action |
 |----------|--------|
-| `Ctrl/Cmd+Shift+U` | Overlay editable (drag / setup) |
-| `Ctrl/Cmd+Shift+L` | Click-through to the game |
+| `Ctrl/Cmd+Alt+U` | Overlay editable (drag / setup) |
+| `Ctrl/Cmd+Alt+L` | Click-through to the game |
 
 ## Trigger model
 
@@ -155,7 +155,7 @@ Same flow as EQL Meter — GitHub Actions builds the NSIS setup.exe and an auto-
 
 1. Download the latest `*_x64-setup.exe` from [Releases](https://github.com/kpxcoolx/eql-alerts/releases/latest)
 2. Run it (current-user install; no admin)
-3. Find log → Overlay → Ctrl+Shift+L for click-through
+3. Find log → Overlay → Ctrl+Alt+L for click-through
 
 ### Ship a new build
 

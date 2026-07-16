@@ -910,17 +910,25 @@ pub fn run() {
                 }
             }
 
+            // Distinct from EQL Meter (Ctrl/Cmd+Shift+U/L). OS hotkeys are
+            // exclusive — sharing them made the second app exit on startup.
             #[cfg(target_os = "macos")]
-            let mods = Modifiers::SUPER | Modifiers::SHIFT;
+            let mods = Modifiers::SUPER | Modifiers::ALT;
             #[cfg(not(target_os = "macos"))]
-            let mods = Modifiers::CONTROL | Modifiers::SHIFT;
+            let mods = Modifiers::CONTROL | Modifiers::ALT;
 
-            app.global_shortcut()
+            if let Err(err) = app
+                .global_shortcut()
                 .register(Shortcut::new(Some(mods), Code::KeyU))
-                .map_err(|e| e.to_string())?;
-            app.global_shortcut()
+            {
+                app_log::write(&format!("hotkey Ctrl/Cmd+Alt+U unavailable: {err}"));
+            }
+            if let Err(err) = app
+                .global_shortcut()
                 .register(Shortcut::new(Some(mods), Code::KeyL))
-                .map_err(|e| e.to_string())?;
+            {
+                app_log::write(&format!("hotkey Ctrl/Cmd+Alt+L unavailable: {err}"));
+            }
 
             if let Err(err) = create_overlay_window(app.handle()) {
                 app_log::write(&format!("overlay pre-create failed: {err}"));

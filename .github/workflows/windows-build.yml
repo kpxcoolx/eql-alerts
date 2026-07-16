@@ -63,7 +63,7 @@ jobs:
 
             1. Run the NSIS `.exe` (current-user install; no admin required).
             2. Start EQL Alerts → **Find log** / **Browse…**.
-            3. Open **Overlay** and use Ctrl+Shift+L for click-through.
+            3. Open **Overlay** and use Ctrl+Alt+L for click-through.
 
             First launch extracts TTS models into `%LOCALAPPDATA%` (one-time).
             After this build, use **Check for updates** for future releases.
