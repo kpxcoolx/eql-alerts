@@ -2,7 +2,7 @@
 
 Lightweight log triggers for **EverQuest Legends** — a modern, no-frills take on [GINA](https://quarm.guide/gina).
 
-[Latest release](https://github.com/kpxcoolx/eql-alerts/releases/latest) · [Discussions](https://github.com/kpxcoolx/eql-alerts/discussions) · [eqlalerts.com](https://eqlalerts.com)
+[Latest release](https://github.com/kpxcoolx/eql-alerts/releases/latest) · [Discussions](https://github.com/kpxcoolx/eql-alerts/discussions) · [eqlalerts.com](https://eqlalerts.com) · [MIT License](LICENSE.md)
 
 Tails your `eqlog_*.txt`, matches simple search text (or regex), and fires:
 
