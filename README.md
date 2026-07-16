@@ -34,13 +34,14 @@ Play EQ with [osxEQL](https://github.com/kpxcoolx/osxEQL) (Wine), and run EQL Al
 
 1. Install and run EQ Legends via osxEQL (`/log on` in-game)
 2. Install EQL Alerts from the latest `.dmg` on [Releases](https://github.com/kpxcoolx/eql-alerts/releases/latest) (or build locally — see below)
-3. Click **Find log** — it should pick up the osxEQL path
-
-If Gatekeeper blocks the app after copying from the DMG:
+3. **First open:** the app isn’t signed by Apple, so macOS Gatekeeper blocks it (“damaged” / “can’t be opened”). Clear quarantine once in Terminal:
 
 ```bash
 xattr -dr com.apple.quarantine "/Applications/EQL Alerts.app"
 ```
+
+   After that it opens normally every time.
+4. Click **Find log** — it should pick up the osxEQL path
 
 ### Mac + Parallels (alternate)
 
@@ -166,7 +167,13 @@ GitHub Actions builds a Windows NSIS setup.exe, a Mac Apple Silicon `.dmg`, and 
 
 1. Download the latest `.dmg` from [Releases](https://github.com/kpxcoolx/eql-alerts/releases/latest)
 2. Drag **EQL Alerts** into Applications
-3. Find log (osxEQL or Parallels) → Overlay → Cmd+Alt+L for click-through
+3. Clear Gatekeeper quarantine (required once — unsigned build):
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/EQL Alerts.app"
+```
+
+4. Find log (osxEQL or Parallels) → Overlay → Cmd+Alt+L for click-through
 
 Local Mac package:
 
