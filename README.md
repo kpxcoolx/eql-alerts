@@ -24,28 +24,33 @@ Legacy GINA binaries in `GINA/` are reference only — this app does not wrap th
 
 Same core idea: **watch the log → match text → notify**.
 
-## Mac + Parallels (same flow as EQL Meter)
+## Mac + osxEQL (native Apple Silicon)
 
-Run the app on the **Mac host**; EQ stays in the Windows VM. The log is read through the mounted `C:` under `/Volumes`.
+Play EQ with [osxEQL](https://github.com/kpxcoolx/osxEQL) (Wine), and run EQL Alerts as a native Mac app. Auto-detect looks in the Wine prefix:
 
-1. Start the Windows VM and EQ Legends (`/log on`)
-2. Confirm Finder → `/Volumes` shows something like `[C] Windows 11.hidden`
-3. From this folder:
-
-```bash
-npm install
-npm run tauri:dev
+```text
+~/Library/Application Support/osxEQL/prefix/drive_c/users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs/eqlog_*.txt
 ```
 
-4. Click **Auto-detect log** (or **Choose log…** and pick `eqlog_*.txt` under the Parallels Logs path)
+1. Install and run EQ Legends via osxEQL (`/log on` in-game)
+2. Install EQL Alerts from the latest `.dmg` on [Releases](https://github.com/kpxcoolx/eql-alerts/releases/latest) (or build locally — see below)
+3. Click **Find log** — it should pick up the osxEQL path
+
+If Gatekeeper blocks the app after copying from the DMG:
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/EQL Alerts.app"
+```
+
+### Mac + Parallels (alternate)
+
+Run the app on the **Mac host**; EQ stays in the Windows VM. The log is read through the mounted `C:` under `/Volumes`.
 
 Typical path:
 
 ```text
-/Volumes/[C] Windows 11.hidden/Users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs/eqlog_Kenkyo_*.txt
+/Volumes/[C] Windows 11.hidden/Users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs/eqlog_*.txt
 ```
-
-There is no Mac installer yet — Mac is for dogfooding via `tauri:dev`, same as the meter.
 
 ### Overlay
 
@@ -89,8 +94,8 @@ Matching uses the line **after** `[timestamp]`. Display tokens: `{C}` character 
 
 ## Quick start
 
-1. `npm run tauri:dev`
-2. **Find log** (Parallels / Windows Legends path)
+1. `npm run tauri:dev` (or install from the Mac `.dmg` / Windows setup.exe)
+2. **Find log** (osxEQL Wine path, Parallels `/Volumes`, or Windows Legends path)
 3. Click your **class chip** to arm that set
 4. Open **Overlay**
 
@@ -147,15 +152,29 @@ python3 scripts/rebuild_eql_starter.py
 
 Notes: Rust regex skips a few GINA patterns that use lookaround/backrefs. GINA **Text-to-voice** lines become `speak` and play through native OS TTS (macOS `say` / Windows SAPI) — Web Speech inside Tauri is unreliable. Optional wav/mp3 paths can go in `sound`. Permanent-buff timer stripping still runs after import.
 
-## Windows installer (Parallels VM)
+## Installers (Windows + Mac)
 
-Same flow as EQL Meter — GitHub Actions builds the NSIS setup.exe and an auto-update feed.
+GitHub Actions builds a Windows NSIS setup.exe, a Mac Apple Silicon `.dmg`, and a shared auto-update feed.
 
-### Install in the VM
+### Windows
 
 1. Download the latest `*_x64-setup.exe` from [Releases](https://github.com/kpxcoolx/eql-alerts/releases/latest)
 2. Run it (current-user install; no admin)
 3. Find log → Overlay → Ctrl+Alt+L for click-through
+
+### Mac (Apple Silicon)
+
+1. Download the latest `.dmg` from [Releases](https://github.com/kpxcoolx/eql-alerts/releases/latest)
+2. Drag **EQL Alerts** into Applications
+3. Find log (osxEQL or Parallels) → Overlay → Cmd+Alt+L for click-through
+
+Local Mac package:
+
+```bash
+npm install
+npm run tauri:build:macos
+# → src-tauri/target/release/bundle/dmg/*.dmg
+```
 
 ### Ship a new build
 
@@ -167,14 +186,15 @@ git tag v0.1.0
 git push origin v0.1.0
 ```
 
-Or: GitHub → Actions → **windows-build** → Run workflow with `v0.1.0`.
+Or: GitHub → Actions → **release** → Run workflow with `v0.1.0`.
 
 CI creates a draft release with:
 
-- `EQL.Alerts_*_x64-setup.exe`
+- `EQL.Alerts_*_x64-setup.exe` (Windows)
+- `EQL Alerts_*_aarch64.dmg` (Mac)
 - `.sig` + `latest.json` for in-app updates
 
-Then publishes only when those assets exist. In the app: **Updates** / banner **Install update**.
+Then publishes only when Windows + Mac assets exist. In the app: **Updates** / banner **Install update**.
 
 ### Secrets (repo Settings → Secrets)
 

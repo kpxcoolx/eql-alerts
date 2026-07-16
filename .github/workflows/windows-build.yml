@@ -1,4 +1,4 @@
-name: windows-build
+name: release
 
 on:
   workflow_dispatch:
@@ -15,8 +15,16 @@ permissions:
   contents: write
 
 jobs:
-  build-windows:
-    runs-on: windows-latest
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: macos-14
+            args: --bundles dmg,app
+          - platform: windows-latest
+            args: --bundles nsis
+    runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -43,13 +51,18 @@ jobs:
       - name: Install frontend deps
         run: npm ci
 
+      - name: Build eql-speak (macOS)
+        if: runner.os == 'macOS'
+        run: bash ./scripts/build_eql_speak.sh
+
       - name: Pack Kokoro TTS for Windows installer
+        if: runner.os == 'Windows'
         shell: pwsh
         run: ./scripts/pack_kokoro_windows.ps1
 
       # Always create a DRAFT first. Publishing happens only after we verify
-      # the NSIS installer + latest.json exist — never leave a broken "Latest".
-      - name: Build Windows installer (draft release)
+      # Windows + Mac updater assets exist — never leave a broken "Latest".
+      - name: Build installer (draft release)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,19 +72,39 @@ jobs:
           tagName: ${{ steps.ver.outputs.tag }}
           releaseName: EQL Alerts ${{ steps.ver.outputs.tag }}
           releaseBody: |
-            Windows installer for EQL Alerts (includes Kokoro neural TTS).
+            Installers for EQL Alerts.
 
-            1. Run the NSIS `.exe` (current-user install; no admin required).
-            2. Start EQL Alerts → **Find log** / **Browse…**.
-            3. Open **Overlay** and use Ctrl+Alt+L for click-through.
+            **Windows:** run the NSIS `.exe` (current-user install; no admin).
+            **Mac (Apple Silicon):** open the `.dmg`, drag **EQL Alerts** to Applications.
+            If Gatekeeper blocks the app: `xattr -dr com.apple.quarantine "/Applications/EQL Alerts.app"`
 
-            First launch extracts TTS models into `%LOCALAPPDATA%` (one-time).
+            Then: **Find log** / **Browse…** → **Overlay** → Ctrl/Cmd+Alt+L for click-through.
+
+            Mac auto-detect looks for osxEQL Wine logs under
+            `~/Library/Application Support/osxEQL/…/EverQuest Legends/Logs`,
+            and Parallels mounts under `/Volumes`.
+
+            Windows first launch extracts TTS models into `%LOCALAPPDATA%` (one-time).
             After this build, use **Check for updates** for future releases.
           releaseDraft: true
           prerelease: false
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
-          args: --bundles nsis
+          args: ${{ matrix.args }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve version tag
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "tag=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Publish only if updater assets are complete
         shell: bash
@@ -81,12 +114,13 @@ jobs:
         run: |
           set -euo pipefail
           echo "Checking assets on $TAG…"
-          assets="$(gh release view "$TAG" --json assets --jq '[.assets[].name] | join("\n")')"
+          assets="$(gh release view "$TAG" --repo "${{ github.repository }}" --json assets --jq '[.assets[].name] | join("\n")')"
           echo "$assets"
           echo "$assets" | grep -E 'setup\.exe$' >/dev/null
           echo "$assets" | grep -E 'setup\.exe\.sig$' >/dev/null
+          echo "$assets" | grep -E '\.dmg$' >/dev/null
           echo "$assets" | grep -x 'latest.json' >/dev/null
-          gh release edit "$TAG" --draft=false
+          gh release edit "$TAG" --repo "${{ github.repository }}" --draft=false
           echo "Published $TAG"
           curl -fsSL "https://github.com/${{ github.repository }}/releases/latest/download/latest.json" \
-            | python -c "import sys,json; d=json.load(sys.stdin); print('updater feed version:', d.get('version'))"
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('updater feed version:', d.get('version'))"

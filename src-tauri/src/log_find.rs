@@ -32,6 +32,10 @@ pub fn candidate_log_dirs() -> Vec<(PathBuf, &'static str)> {
         "windows",
     ));
 
+    for logs in osxeql_log_dirs() {
+        dirs.push((logs, "osxeql"));
+    }
+
     for volume_logs in parallels_log_dirs() {
         dirs.push((volume_logs, "parallels"));
     }
@@ -49,6 +53,33 @@ pub fn candidate_log_dirs() -> Vec<(PathBuf, &'static str)> {
             dirs.push((parent.join("samples"), "sample"));
         }
     }
+
+    dirs
+}
+
+/// Native Mac Wine install from [osxEQL](https://github.com/kpxcoolx/osxEQL).
+/// Game lives under the Wine prefix in Application Support (not under /Volumes).
+pub fn osxeql_log_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    let Ok(home) = std::env::var("HOME") else {
+        return dirs;
+    };
+    let home = PathBuf::from(home);
+    let relative = PathBuf::from("drive_c/users/Public/Daybreak Game Company")
+        .join("Installed Games")
+        .join("EverQuest Legends")
+        .join("Logs");
+
+    // Active prefix used by current osxEQL builds.
+    dirs.push(
+        home.join("Library/Application Support/osxEQL/prefix")
+            .join(&relative),
+    );
+    // Legacy extracted-from-CrossOver prefix (older installs).
+    dirs.push(
+        home.join("Library/Application Support/osxEQL/prefix-cx")
+            .join(&relative),
+    );
 
     dirs
 }
@@ -103,7 +134,7 @@ pub fn find_eq_logs() -> Vec<FoundLog> {
 
     found.sort_by(|a, b| {
         let source_rank = |s: &str| match s {
-            "parallels" | "windows" => 0,
+            "osxeql" | "parallels" | "windows" => 0,
             "local" => 1,
             _ => 2,
         };
@@ -175,4 +206,22 @@ pub fn split_log_line(line: &str) -> Option<(String, String)> {
         return None;
     }
     Some((timestamp, action))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn osxeql_dirs_point_at_wine_prefix_logs() {
+        std::env::set_var("HOME", "/Users/test");
+        let dirs = osxeql_log_dirs();
+        assert_eq!(dirs.len(), 2);
+        assert!(dirs[0].ends_with(
+            "Library/Application Support/osxEQL/prefix/drive_c/users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs"
+        ));
+        assert!(dirs[1].ends_with(
+            "Library/Application Support/osxEQL/prefix-cx/drive_c/users/Public/Daybreak Game Company/Installed Games/EverQuest Legends/Logs"
+        ));
+    }
 }
