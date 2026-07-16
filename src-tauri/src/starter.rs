@@ -15,6 +15,7 @@ pub fn starter_pack() -> TriggerLibrary {
 
     ensure_essentials(&mut pack);
     let _ = ensure_shaman_warnings(&mut pack);
+    let _ = ensure_shaman_dots(&mut pack);
     let _ = ensure_eql_mez_timers(&mut pack);
     let _ = ensure_eql_disease_dot_timers(&mut pack);
     let _ = ensure_default_tts(&mut pack);
@@ -890,6 +891,7 @@ fn ensure_early_end(trigger: &mut Trigger, pattern: &str) {
 
 /// Shared DoT emotes fire for any caster (you, pet, mob, other players).
 /// Rewrite Damage Over Time timers to your land-hit line so clocks start only for you.
+/// Also tolerate EQL upgrade ranks (`by Plague IV.`).
 pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
@@ -904,20 +906,25 @@ pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
             if trigger.timer_seconds.unwrap_or(0) == 0 {
                 continue;
             }
-            if crate::engine::is_self_attributed_search(&trigger.search) {
-                continue;
-            }
             let Some(spell) = crate::engine::spell_basename(&trigger.name) else {
                 continue;
             };
+            let desired = crate::engine::you_hit_by_spell_pattern(&spell);
+            if trigger.search == desired {
+                continue;
+            }
+            let is_land = trigger.search.contains("You hit") && trigger.search.contains(" by ");
+            let is_shared = !crate::engine::is_self_attributed_search(&trigger.search);
+            if !is_land && !is_shared {
+                continue;
+            }
             let before = serde_json::to_string(trigger).unwrap_or_default();
-            let escaped = regex::escape(&spell);
-            trigger.search =
-                format!(r"^You hit ([\w -'`]+) for \d+ points of \w+ damage by {escaped}\.$");
+            trigger.search = desired;
             trigger.use_regex = true;
             if trigger.comments.is_none() {
                 trigger.comments = Some(
-                    "EQL: match your land hit — shared emotes fire for any caster".into(),
+                    "EQL: match your land hit — shared emotes fire for any caster; ranks OK"
+                        .into(),
                 );
             }
             let after = serde_json::to_string(trigger).unwrap_or_default();
@@ -927,6 +934,82 @@ pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
         }
     }
     changed
+}
+
+/// Shaman DoTs that belong in the class pack (Odium / Plague / Envenomed Bolt are EQL shaman spells).
+pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
+    let group_name = "Classes / Shaman / Damage Over Time";
+    let Some(idx) = library
+        .groups
+        .iter()
+        .position(|g| g.name == group_name || g.name.eq_ignore_ascii_case(group_name))
+    else {
+        return 0;
+    };
+
+    let early_end = vec![
+        r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$".to_string(),
+        r"^cleardots? is not online at this time\.$".to_string(),
+    ];
+
+    let missing: Vec<Trigger> = [
+        (
+            "eql-shaman-odium",
+            "Odium",
+            30u64,
+            "Odium - ${1}",
+            Some("${1} Odium"),
+        ),
+        (
+            "eql-shaman-envenomed-bolt",
+            "Envenomed Bolt",
+            48,
+            "Envenomed Bolt - ${1}",
+            Some("${1} Envenom Bolted"),
+        ),
+        (
+            "eql-shaman-plague",
+            "Plague",
+            132,
+            "Plague - ${1}",
+            None,
+        ),
+    ]
+    .into_iter()
+    .filter(|(_, name, _, _, _)| {
+        !library.groups[idx]
+            .triggers
+            .iter()
+            .any(|t| t.name == *name || spell_basename_eq(&t.name, name))
+    })
+    .map(|(id, name, secs, timer_name, display)| Trigger {
+        id: id.into(),
+        name: name.into(),
+        enabled: true,
+        search: crate::engine::you_hit_by_spell_pattern(name),
+        use_regex: true,
+        display_text: display.map(str::to_string),
+        timer_seconds: Some(secs),
+        timer_name: Some(timer_name.into()),
+        early_end: early_end.clone(),
+        sound: None,
+        speak: display.map(str::to_string),
+        tts_enabled: display.is_some(),
+        comments: Some(
+            "EQL: match your land hit — shared emotes fire for any caster; ranks OK".into(),
+        ),
+    })
+    .collect();
+
+    let n = missing.len();
+    library.groups[idx].triggers.extend(missing);
+    n
+}
+
+fn spell_basename_eq(trigger_name: &str, want: &str) -> bool {
+    crate::engine::spell_basename(trigger_name)
+        .map(|b| b.eq_ignore_ascii_case(want))
+        .unwrap_or(false)
 }
 
 /// Fill missing speak lines so every trigger can announce via TTS by default.
@@ -1354,6 +1437,7 @@ mod tests {
         assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 0);
         let scourge = &lib.groups[0].triggers[0];
         assert!(scourge.search.contains("by Scourge"));
+        assert!(scourge.search.contains(r"(?: [IVX]+)?"));
         assert!(!scourge.search.contains("feverish"));
     }
 
@@ -1409,6 +1493,77 @@ mod tests {
         assert!(!lib.groups[0].triggers[0]
             .search
             .contains("has been poisoned"));
+        assert!(lib.groups[0].triggers[0]
+            .search
+            .contains(r"(?: [IVX]+)?"));
+    }
+
+    #[test]
+    fn ensure_eql_disease_dot_timers_upgrades_rank_suffix() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "plague".into(),
+                    name: "Plague".into(),
+                    enabled: true,
+                    search: r"^You hit ([\w -'`]+) for \d+ points of disease damage by Plague\.$"
+                        .into(),
+                    use_regex: true,
+                    display_text: None,
+                    timer_seconds: Some(132),
+                    timer_name: Some("Plague - ${1}".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 1);
+        assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 0);
+        assert!(lib.groups[0].triggers[0]
+            .search
+            .contains(r"(?: [IVX]+)?"));
+    }
+
+    #[test]
+    fn ensure_shaman_dots_adds_odium_plague_bolt() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "bane".into(),
+                    name: "Bane of Nife".into(),
+                    enabled: true,
+                    search: crate::engine::you_hit_by_spell_pattern("Bane of Nife"),
+                    use_regex: true,
+                    display_text: None,
+                    timer_seconds: Some(45),
+                    timer_name: Some("Bane - ${1}".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        assert_eq!(ensure_shaman_dots(&mut lib), 3);
+        assert_eq!(ensure_shaman_dots(&mut lib), 0);
+        let names: Vec<_> = lib.groups[0]
+            .triggers
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert!(names.contains(&"Odium"));
+        assert!(names.contains(&"Envenomed Bolt"));
+        assert!(names.contains(&"Plague"));
     }
 
     #[test]
@@ -1419,8 +1574,7 @@ mod tests {
             id: "dc9fed12dd5a-3".into(),
             name: "Scourge".into(),
             enabled: true,
-            search: r"^You hit ([\w -'`]+) for \d+ points of disease damage by Scourge\.$"
-                .into(),
+            search: crate::engine::you_hit_by_spell_pattern("Scourge"),
             use_regex: true,
             display_text: None,
             timer_seconds: Some(126),
@@ -1455,6 +1609,15 @@ mod tests {
             yours[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Scourge - a zol ghoul knight")
         );
+
+        let ranked = engine.process_action(
+            "You hit a lava guardian for 80 points of disease damage by Scourge IV.",
+        );
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(
+            ranked[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Scourge - a lava guardian")
+        );
     }
 
     #[test]
@@ -1465,8 +1628,7 @@ mod tests {
             id: "venom".into(),
             name: "Venom of the Snake".into(),
             enabled: true,
-            search: r"^You hit ([\w -'`]+) for \d+ points of poison damage by Venom of the Snake\.$"
-                .into(),
+            search: crate::engine::you_hit_by_spell_pattern("Venom of the Snake"),
             use_regex: true,
             display_text: None,
             timer_seconds: Some(42),
@@ -1509,6 +1671,50 @@ mod tests {
         assert_eq!(
             yours[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Venom of the Snake - a vampire bat")
+        );
+    }
+
+    #[test]
+    fn shaman_odium_plague_bolt_match_ranked_lands() {
+        use crate::engine::TriggerEngine;
+
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![],
+            }],
+        };
+        assert_eq!(ensure_shaman_dots(&mut lib), 3);
+        let _ = ensure_eql_disease_dot_timers(&mut lib);
+        let mut engine = TriggerEngine::new(lib);
+
+        let odium = engine.process_action(
+            "You hit a lava guardian for 120 points of curse damage by Odium III.",
+        );
+        assert_eq!(odium.len(), 1);
+        assert_eq!(
+            odium[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Odium - a lava guardian")
+        );
+
+        let bolt = engine.process_action(
+            "You hit a lava guardian for 55 points of poison damage by Envenomed Bolt II.",
+        );
+        assert_eq!(bolt.len(), 1);
+        assert_eq!(
+            bolt[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Envenomed Bolt - a lava guardian")
+        );
+
+        let plague = engine.process_action(
+            "You hit a lava guardian for 1,234 points of disease damage by Plague IV.",
+        );
+        assert_eq!(plague.len(), 1);
+        assert_eq!(
+            plague[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Plague - a lava guardian")
         );
     }
 }

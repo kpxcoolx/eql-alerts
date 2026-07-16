@@ -126,7 +126,7 @@ EQL Alerts scopes those to **your** casts:
 
 | Kind | How |
 |------|-----|
-| **Damage Over Time** timers | Match `You hit <target> … by <Spell>.` (rewritten on load via `ensure_eql_disease_dot_timers`) |
+| **Damage Over Time** timers | Match `You hit <target> … by <Spell>` including EQL upgrade ranks (`Plague IV`) via `ensure_eql_disease_dot_timers` |
 | **Crowd Control** (mez, etc.) | Land emote only arms if you recently `You begin casting` that spell (Dazzle still upgrades the shared mesmerize line) |
 | **Slowed / Maloed** warnings | Same cast gate — ignores party Drowsy / other malo lands |
 

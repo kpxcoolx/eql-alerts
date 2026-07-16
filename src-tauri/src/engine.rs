@@ -172,6 +172,17 @@ pub fn spell_basename(name: &str) -> Option<String> {
     Some(base.to_string())
 }
 
+/// Optional EQL upgrade rank after a spell name (`Plague IV`, `Odium II`).
+pub const SPELL_RANK_SUFFIX: &str = r"(?: [IVX]+)?";
+
+/// Your land-hit line for a DoT/spell, matching any upgrade rank.
+pub fn you_hit_by_spell_pattern(spell: &str) -> String {
+    let escaped = regex::escape(spell);
+    format!(
+        r"^You hit ([\w -'`]+) for [\d,]+ points of \w+ damage by {escaped}{SPELL_RANK_SUFFIX}\.$"
+    )
+}
+
 fn normalize_spell_name(name: &str) -> String {
     let mut s = name.trim().to_ascii_lowercase();
     let romans = [

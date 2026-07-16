@@ -1,6 +1,6 @@
 [package]
 name = "eql-alerts"
-version = "0.1.10"
+version = "0.1.11"
 description = "Lightweight log alerts for EverQuest Legends"
 authors = ["EQ Legends"]
 license = "MIT"
