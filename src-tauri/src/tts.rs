@@ -658,9 +658,12 @@ fn eql_speak_bin() -> Option<PathBuf> {
         .join("binaries")
         .join("eql-speak")];
     if let Ok(exe) = std::env::current_exe() {
-        if let Some(parent) = exe.parent() {
-            candidates.push(parent.join("eql-speak"));
-            candidates.push(parent.join("binaries").join("eql-speak"));
+        if let Some(dir) = exe.parent() {
+            candidates.push(dir.join("eql-speak"));
+            candidates.push(dir.join("binaries").join("eql-speak"));
+            // macOS .app: Contents/MacOS → Contents/Resources (Tauri bundle.resources)
+            candidates.push(dir.join("../Resources/binaries/eql-speak"));
+            candidates.push(dir.join("../Resources/resources/binaries/eql-speak"));
         }
     }
     candidates.into_iter().find(|p| p.exists())
