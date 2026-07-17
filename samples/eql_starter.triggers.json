@@ -1121,7 +1121,7 @@
           "timer_seconds": 18,
           "timer_name": "Divine Barrier",
           "early_end": [
-            "^The barrier fades.$",
+            "^The barrier fades\\.$",
             "^You have been slain by (?:[^!]+)\\!$"
           ],
           "sound": null,
@@ -1132,7 +1132,7 @@
           "id": "073b8ff8f8e8-2",
           "name": "Divine Aura Cooldown",
           "enabled": true,
-          "search": "^(The gods have rendered you invulnerable|You have finished memorizing Divine Aura)\\.$",
+          "search": "^(The gods have rendered you invulnerable|You are surrounded by a divine aura|You have finished memorizing Divine Aura)\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 900,
@@ -1143,6 +1143,24 @@
           "sound": null,
           "speak": null,
           "comments": null
+        },
+        {
+          "id": "eql-divine-aura-duration",
+          "name": "Divine Aura",
+          "enabled": true,
+          "search": "^(The gods have rendered you invulnerable|You are surrounded by a divine aura)\\.$",
+          "use_regex": true,
+          "display_text": null,
+          "timer_seconds": 18,
+          "timer_name": "Divine Aura",
+          "early_end": [
+            "^Your (aura fades|invulnerability fades)\\.$",
+            "^You have been slain by (?:[^!]+)\\!$"
+          ],
+          "sound": null,
+          "speak": "Divine Aura",
+          "tts_enabled": true,
+          "comments": "EQL: 18s duration; 900s CD is a separate trigger"
         }
       ]
     },
@@ -1854,6 +1872,7 @@
           "timer_seconds": 72,
           "timer_name": "Entrance - ${1}",
           "early_end": [
+            "^Your Entrance spell has worn off of ${1}\\.$",
             "^Your Entrance spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
@@ -1871,12 +1890,13 @@
           "timer_seconds": 36,
           "timer_name": "Fascination - ${1}",
           "early_end": [
+            "^Your Fascination spell has worn off of ${1}\\.$",
             "^Your Fascination spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "comments": "EQL AE: land is often 'mesmerized' \u2014 engine remaps after Fascination cast"
         },
         {
           "id": "a0a8628d752e-2",
@@ -1905,6 +1925,7 @@
           "timer_seconds": 24,
           "timer_name": "Mesmerize - ${1}",
           "early_end": [
+            "^Your (Mesmerize|Mesmerization) spell has worn off of ${1}\\.$",
             "^Your (Mesmerize|Mesmerization) spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
@@ -1955,6 +1976,7 @@
           "timer_seconds": 48,
           "timer_name": "Enthrall - ${1}",
           "early_end": [
+            "^Your Enthrall spell has worn off of ${1}\\.$",
             "^Your Enthrall spell has worn off\\.$",
             "^cleardebuf(f|fs) is not online at this time\\.$"
           ],
@@ -1972,6 +1994,7 @@
           "timer_seconds": null,
           "timer_name": "Dazzle - ${1}",
           "early_end": [
+            "^Your Dazzle spell has worn off of ${1}\\.$",
             "^Your Dazzle spell has worn off\\.$"
           ],
           "sound": "none",
@@ -3687,7 +3710,7 @@
           "id": "7c47d4341972-0",
           "name": "Divine Aura Cooldown",
           "enabled": true,
-          "search": "^(The gods have rendered you invulnerable|You have finished memorizing Divine Aura)\\.$",
+          "search": "^(The gods have rendered you invulnerable|You are surrounded by a divine aura|You have finished memorizing Divine Aura)\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 900,
@@ -3698,6 +3721,24 @@
           "sound": null,
           "speak": null,
           "comments": null
+        },
+        {
+          "id": "eql-divine-aura-duration",
+          "name": "Divine Aura",
+          "enabled": true,
+          "search": "^(The gods have rendered you invulnerable|You are surrounded by a divine aura)\\.$",
+          "use_regex": true,
+          "display_text": null,
+          "timer_seconds": 18,
+          "timer_name": "Divine Aura",
+          "early_end": [
+            "^Your (aura fades|invulnerability fades)\\.$",
+            "^You have been slain by (?:[^!]+)\\!$"
+          ],
+          "sound": null,
+          "speak": "Divine Aura",
+          "tts_enabled": true,
+          "comments": "EQL: 18s duration; 900s CD is a separate trigger"
         }
       ]
     },
@@ -4843,6 +4884,25 @@
           "comments": null
         },
         {
+          "id": "eql-shm-spirit-of-the-puma",
+          "name": "Spirit of the Puma",
+          "enabled": true,
+          "search": "^You begin to snarl as your features become feline\\.$",
+          "use_regex": true,
+          "display_text": null,
+          "timer_seconds": 85,
+          "timer_name": "Spirit of the Puma",
+          "early_end": [
+            "^The spirit of the puma departs\\.$",
+            "^You have been slain by (?:[^!]+)\\!$",
+            "^clearbuffs? is not online at this time\\.$"
+          ],
+          "sound": null,
+          "speak": "Puma",
+          "tts_enabled": true,
+          "comments": "EQL: ~85s self proc buff (not wiki 60s)"
+        },
+        {
           "id": "f0a20f45cc96-5",
           "name": "Vision",
           "enabled": true,
@@ -4993,7 +5053,7 @@
           "id": "eql-shaman-odium",
           "name": "Odium",
           "enabled": true,
-          "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Odium(?: [IVX]+)?\\.$",
+          "search": "^([\\w -'`]+) staggers under a dark curse\\.$",
           "use_regex": true,
           "display_text": "${1} Odium",
           "timer_seconds": 30,
@@ -5004,7 +5064,7 @@
           ],
           "sound": null,
           "speak": "${1} Odium",
-          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster; ranks OK"
+          "comments": "EQL: dark curse emote is shared \u2014 engine only fires after your Odium cast"
         },
         {
           "id": "eql-shaman-envenomed-bolt",
@@ -5029,7 +5089,7 @@
           "enabled": true,
           "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Plague(?: [IVX]+)?\\.$",
           "use_regex": true,
-          "display_text": null,
+          "display_text": "${1} Plagued",
           "timer_seconds": 132,
           "timer_name": "Plague - ${1}",
           "early_end": [
@@ -5037,7 +5097,7 @@
             "^cleardots? is not online at this time\\.$"
           ],
           "sound": null,
-          "speak": null,
+          "speak": "${1} Plagued",
           "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster; ranks OK"
         }
       ]
@@ -5150,6 +5210,34 @@
           "early_end": [],
           "sound": null,
           "speak": "Malo off",
+          "comments": null
+        },
+        {
+          "id": "eql-shm-incap-landed",
+          "name": "Incapacitate",
+          "enabled": true,
+          "search": "^([\\w -'`]+) looks frail\\.$",
+          "use_regex": true,
+          "display_text": "${1} Incapacitated",
+          "timer_seconds": null,
+          "timer_name": null,
+          "early_end": [],
+          "sound": null,
+          "speak": "${1} Incapacitated",
+          "comments": "EQL: looks frail is shared \u2014 engine only fires after your Incapacitate cast"
+        },
+        {
+          "id": "eql-shm-incap-resisted",
+          "name": "Incapacitate Resisted",
+          "enabled": true,
+          "search": "^Your target resisted the Incapacitate spell\\.$",
+          "use_regex": true,
+          "display_text": "Incapacitate resisted",
+          "timer_seconds": null,
+          "timer_name": null,
+          "early_end": [],
+          "sound": null,
+          "speak": "Incapacitate resisted",
           "comments": null
         }
       ]

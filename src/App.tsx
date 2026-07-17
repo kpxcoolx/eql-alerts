@@ -41,6 +41,8 @@ type AppSettings = {
   voice_female: string;
   voice_male: string;
   voice_volume: number;
+  /** Master switch for all live alert speech. */
+  tts_enabled: boolean;
   audio_output_device: string;
   default_alert_sound: string;
   main_window: unknown;
@@ -831,6 +833,7 @@ export default function App() {
       voice_female: "bf_isabella",
       voice_male: "am_michael",
       voice_volume: 0.2,
+      tts_enabled: true,
       audio_output_device: "",
       default_alert_sound: "none",
       main_window: null,
@@ -855,6 +858,7 @@ export default function App() {
       voice_female: "bf_isabella",
       voice_male: "am_michael",
       voice_volume: 0.2,
+      tts_enabled: true,
       audio_output_device: "",
       default_alert_sound: "none",
       main_window: null,
@@ -1680,6 +1684,36 @@ export default function App() {
             <div className="sidebar-tools">
               <div className="sidebar-label">Tools</div>
               <button
+                className={`sidebar-tool-btn ${(settings?.tts_enabled ?? true) ? "accent" : "muted"}`}
+                type="button"
+                title={
+                  (settings?.tts_enabled ?? true)
+                    ? "Mute all text-to-speech callouts"
+                    : "Unmute text-to-speech callouts"
+                }
+                onClick={() =>
+                  void patchSettings({
+                    tts_enabled: !(settings?.tts_enabled ?? true),
+                  })
+                }
+              >
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+                  {(settings?.tts_enabled ?? true) ? (
+                    <>
+                      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+                      <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+                      <path d="M18.5 5.5a9 9 0 0 1 0 13" />
+                    </>
+                  ) : (
+                    <>
+                      <path d="M11 5 6 9H3v6h3l5 4V5Z" />
+                      <path d="M22 9 16 15M16 9l6 6" />
+                    </>
+                  )}
+                </svg>
+                {(settings?.tts_enabled ?? true) ? "TTS on" : "TTS off"}
+              </button>
+              <button
                 className={`sidebar-tool-btn ${overlayOpen ? "" : "accent"}`}
                 type="button"
                 title={
@@ -2259,6 +2293,16 @@ export default function App() {
 
               <section className="settings-section">
                 <h3>Voice & audio</h3>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked={settings?.tts_enabled ?? true}
+                    onChange={(e) =>
+                      void patchSettings({ tts_enabled: e.target.checked })
+                    }
+                  />
+                  Speak alerts with TTS
+                </label>
                 <label className="audio-field">
                   <span className="audio-label">Voice</span>
                   <div className="audio-inline">

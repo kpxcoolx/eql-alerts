@@ -16,7 +16,9 @@ pub fn starter_pack() -> TriggerLibrary {
     ensure_essentials(&mut pack);
     let _ = ensure_shaman_warnings(&mut pack);
     let _ = ensure_shaman_dots(&mut pack);
+    let _ = ensure_shaman_buffs(&mut pack);
     let _ = ensure_eql_mez_timers(&mut pack);
+    let _ = ensure_divine_invulnerability(&mut pack);
     let _ = ensure_eql_disease_dot_timers(&mut pack);
     let _ = ensure_default_tts(&mut pack);
     pack
@@ -320,6 +322,24 @@ fn essentials_groups() -> Vec<TriggerGroup> {
                     Some("Feared"),
                     Some("sosumi"),
                     Some("Dragon roar / fear lands"),
+                ),
+                t_regex(
+                    "eql-essentials-slowed",
+                    "Slowed",
+                    r"^You (slow down|feel drowsy)\.$",
+                    Some("SLOWED"),
+                    Some("Slowed"),
+                    Some("sosumi"),
+                    Some("Attack slow on you — cure it"),
+                ),
+                t_regex(
+                    "eql-essentials-slow-broke",
+                    "Slow broke",
+                    r"^Your speed returns to normal\.$",
+                    Some("Slow free"),
+                    Some("Slow broke"),
+                    Some("glass"),
+                    None,
                 ),
                 t_regex(
                     "eql-essentials-rooted",
@@ -788,6 +808,24 @@ fn shaman_warning_triggers() -> Vec<Trigger> {
             None,
             None,
         ),
+        t_regex(
+            "eql-shm-incap-landed",
+            "Incapacitate",
+            r"^([\w -'`]+) looks frail\.$",
+            Some("${1} Incapacitated"),
+            Some("${1} Incapacitated"),
+            None,
+            Some("EQL: looks frail is shared — engine only fires after your Incapacitate cast"),
+        ),
+        t_regex(
+            "eql-shm-incap-resisted",
+            "Incapacitate Resisted",
+            r"^Your target resisted the Incapacitate spell\.$",
+            Some("Incapacitate resisted"),
+            Some("Incapacitate resisted"),
+            None,
+            None,
+        ),
     ]
 }
 
@@ -828,16 +866,85 @@ pub fn ensure_eql_mez_timers(library: &mut TriggerLibrary) -> usize {
                 trigger.timer_seconds = Some(48);
                 ensure_early_end(trigger, r"^Your Dictate spell has worn off\.$");
             } else if name == "Entrance" {
+                if !trigger
+                    .timer_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("${1}")
+                {
+                    trigger.timer_name = Some("Entrance - ${1}".into());
+                }
+                ensure_early_end(
+                    trigger,
+                    r"^Your Entrance spell has worn off of ${1}\.$",
+                );
                 ensure_early_end(trigger, r"^Your Entrance spell has worn off\.$");
             } else if name == "Enthrall" {
+                if !trigger
+                    .timer_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("${1}")
+                {
+                    trigger.timer_name = Some("Enthrall - ${1}".into());
+                }
+                ensure_early_end(
+                    trigger,
+                    r"^Your Enthrall spell has worn off of ${1}\.$",
+                );
                 ensure_early_end(trigger, r"^Your Enthrall spell has worn off\.$");
             } else if name == "Fascination" {
+                if !trigger
+                    .timer_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("${1}")
+                {
+                    trigger.timer_name = Some("Fascination - ${1}".into());
+                }
+                // Land search stays "fascinated" (wiki); EQL AE uses mesmerized + engine remap.
+                ensure_early_end(
+                    trigger,
+                    r"^Your Fascination spell has worn off of ${1}\.$",
+                );
                 ensure_early_end(trigger, r"^Your Fascination spell has worn off\.$");
+                if trigger.comments.is_none() {
+                    trigger.comments = Some(
+                        "EQL AE: land is often 'mesmerized' — engine remaps after Fascination cast"
+                            .into(),
+                    );
+                }
             } else if name.starts_with("Mesmerize") {
+                if !trigger
+                    .timer_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("${1}")
+                {
+                    trigger.timer_name = Some("Mesmerize - ${1}".into());
+                }
+                ensure_early_end(
+                    trigger,
+                    r"^Your (Mesmerize|Mesmerization) spell has worn off of ${1}\.$",
+                );
                 ensure_early_end(
                     trigger,
                     r"^Your (Mesmerize|Mesmerization) spell has worn off\.$",
                 );
+            } else if name == "Dazzle" {
+                if !trigger
+                    .timer_name
+                    .as_deref()
+                    .unwrap_or("")
+                    .contains("${1}")
+                {
+                    trigger.timer_name = Some("Dazzle - ${1}".into());
+                }
+                ensure_early_end(
+                    trigger,
+                    r"^Your Dazzle spell has worn off of ${1}\.$",
+                );
+                ensure_early_end(trigger, r"^Your Dazzle spell has worn off\.$");
             } else if name == "Rapture Cooldown" {
                 trigger.timer_seconds = Some(24);
             } else if name == "Dictate Cooldown" {
@@ -867,7 +974,10 @@ pub fn ensure_eql_mez_timers(library: &mut TriggerLibrary) -> usize {
                 display_text: Some("".into()),
                 timer_seconds: None,
                 timer_name: Some("Dazzle - ${1}".into()),
-                early_end: vec![r"^Your Dazzle spell has worn off\.$".into()],
+                early_end: vec![
+                    r"^Your Dazzle spell has worn off of ${1}\.$".into(),
+                    r"^Your Dazzle spell has worn off\.$".into(),
+                ],
                 sound: Some("none".into()),
                 speak: None,
                 tts_enabled: false,
@@ -883,6 +993,98 @@ pub fn ensure_eql_mez_timers(library: &mut TriggerLibrary) -> usize {
     changed
 }
 
+
+/// Cleric/Paladin Divine Aura & Barrier: ensure 18s duration timers + EQL land lines.
+pub fn ensure_divine_invulnerability(library: &mut TriggerLibrary) -> usize {
+    let mut changed = 0usize;
+    let aura_duration = Trigger {
+        id: "eql-divine-aura-duration".into(),
+        name: "Divine Aura".into(),
+        enabled: true,
+        search: r"^(The gods have rendered you invulnerable|You are surrounded by a divine aura)\.$"
+            .into(),
+        use_regex: true,
+        display_text: None,
+        timer_seconds: Some(18),
+        timer_name: Some("Divine Aura".into()),
+        early_end: vec![
+            r"^Your (aura fades|invulnerability fades)\.$".into(),
+            r"^You have been slain by (?:[^!]+)\!$".into(),
+        ],
+        sound: None,
+        speak: Some("Divine Aura".into()),
+        tts_enabled: true,
+        comments: Some("EQL: 18s duration; 900s CD is a separate trigger".into()),
+    };
+    let barrier_duration = Trigger {
+        id: "eql-divine-barrier-duration".into(),
+        name: "Divine Barrier".into(),
+        enabled: true,
+        search: r"^You are surrounded by a divine barrier\.$".into(),
+        use_regex: true,
+        display_text: None,
+        timer_seconds: Some(18),
+        timer_name: Some("Divine Barrier".into()),
+        early_end: vec![
+            r"^The barrier fades\.$".into(),
+            r"^You have been slain by (?:[^!]+)\!$".into(),
+        ],
+        sound: None,
+        speak: Some("Divine Barrier".into()),
+        tts_enabled: true,
+        comments: Some("EQL: 18s duration; 900s CD is a separate trigger".into()),
+    };
+    let aura_cd_search = r"^(The gods have rendered you invulnerable|You are surrounded by a divine aura|You have finished memorizing Divine Aura)\.$";
+
+    for group in &mut library.groups {
+        let n = group.name.to_ascii_lowercase();
+        let is_invuln = n.contains("invulnerability")
+            && (n.contains("cleric") || n.contains("paladin"));
+        if !is_invuln {
+            continue;
+        }
+
+        for trigger in &mut group.triggers {
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            if trigger.name == "Divine Aura Cooldown" {
+                trigger.search = aura_cd_search.into();
+            }
+            if trigger.name == "Divine Barrier" && trigger.timer_seconds == Some(18) {
+                ensure_early_end(trigger, r"^The barrier fades\.$");
+                ensure_early_end(trigger, r"^You have been slain by (?:[^!]+)\!$");
+                trigger.search = r"^You are surrounded by a divine barrier\.$".into();
+            }
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+
+        let has_aura_dur = group.triggers.iter().any(|t| {
+            t.id == "eql-divine-aura-duration"
+                || (t.name == "Divine Aura" && t.timer_seconds == Some(18))
+        });
+        if !has_aura_dur {
+            group.triggers.push(aura_duration.clone());
+            changed += 1;
+        }
+
+        if n.contains("cleric") {
+            let has_barrier_dur = group.triggers.iter().any(|t| {
+                t.id == "eql-divine-barrier-duration"
+                    || t.id == "073b8ff8f8e8-1"
+                    || (t.name == "Divine Barrier" && t.timer_seconds == Some(18))
+            });
+            if !has_barrier_dur {
+                group.triggers.push(barrier_duration.clone());
+                changed += 1;
+            }
+        }
+    }
+
+    changed
+}
+
 fn ensure_early_end(trigger: &mut Trigger, pattern: &str) {
     if !trigger.early_end.iter().any(|e| e == pattern) {
         trigger.early_end.insert(0, pattern.to_string());
@@ -892,6 +1094,7 @@ fn ensure_early_end(trigger: &mut Trigger, pattern: &str) {
 /// Shared DoT emotes fire for any caster (you, pet, mob, other players).
 /// Rewrite Damage Over Time timers to your land-hit line so clocks start only for you.
 /// Also tolerate EQL upgrade ranks (`by Plague IV.`).
+/// Odium is excluded — it lands on a shared emote and is cast-gated instead.
 pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
@@ -909,6 +1112,9 @@ pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
             let Some(spell) = crate::engine::spell_basename(&trigger.name) else {
                 continue;
             };
+            if spell.eq_ignore_ascii_case("Odium") {
+                continue;
+            }
             let desired = crate::engine::you_hit_by_spell_pattern(&spell);
             if trigger.search == desired {
                 continue;
@@ -936,6 +1142,10 @@ pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
     changed
 }
 
+fn odium_land_pattern() -> &'static str {
+    r"^([\w -'`]+) staggers under a dark curse\.$"
+}
+
 /// Shaman DoTs that belong in the class pack (Odium / Plague / Envenomed Bolt are EQL shaman spells).
 pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
     let group_name = "Classes / Shaman / Damage Over Time";
@@ -952,13 +1162,54 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
         r"^cleardots? is not online at this time\.$".to_string(),
     ];
 
-    let missing: Vec<Trigger> = [
+    let mut changed = 0usize;
+
+    // Patch existing Odium / Plague so TTS and Odium land matching stay correct.
+    for trigger in &mut library.groups[idx].triggers {
+        if trigger.id == "eql-shaman-odium" || spell_basename_eq(&trigger.name, "Odium") {
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            trigger.search = odium_land_pattern().into();
+            trigger.use_regex = true;
+            trigger.display_text = Some("${1} Odium".into());
+            trigger.speak = Some("${1} Odium".into());
+            trigger.tts_enabled = true;
+            if trigger.timer_seconds.unwrap_or(0) == 0 {
+                trigger.timer_seconds = Some(30);
+            }
+            if trigger.timer_name.is_none() {
+                trigger.timer_name = Some("Odium - ${1}".into());
+            }
+            trigger.comments = Some(
+                "EQL: dark curse emote is shared — engine only fires after your Odium cast"
+                    .into(),
+            );
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+            continue;
+        }
+        if trigger.id == "eql-shaman-plague" || spell_basename_eq(&trigger.name, "Plague") {
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            trigger.display_text = Some("${1} Plagued".into());
+            trigger.speak = Some("${1} Plagued".into());
+            trigger.tts_enabled = true;
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+    }
+
+    let specs: Vec<(&str, &str, u64, &str, Option<&str>, &str, &str)> = vec![
         (
             "eql-shaman-odium",
             "Odium",
-            30u64,
+            30,
             "Odium - ${1}",
             Some("${1} Odium"),
+            odium_land_pattern(),
+            "EQL: dark curse emote is shared — engine only fires after your Odium cast",
         ),
         (
             "eql-shaman-envenomed-bolt",
@@ -966,44 +1217,103 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
             48,
             "Envenomed Bolt - ${1}",
             Some("${1} Envenom Bolted"),
+            "",
+            "EQL: match your land hit — shared emotes fire for any caster; ranks OK",
         ),
         (
             "eql-shaman-plague",
             "Plague",
             132,
             "Plague - ${1}",
-            None,
+            Some("${1} Plagued"),
+            "",
+            "EQL: match your land hit — shared emotes fire for any caster; ranks OK",
         ),
-    ]
-    .into_iter()
-    .filter(|(_, name, _, _, _)| {
-        !library.groups[idx]
+    ];
+
+    for (id, name, secs, timer_name, display, search, comments) in specs {
+        let exists = library.groups[idx]
             .triggers
             .iter()
-            .any(|t| t.name == *name || spell_basename_eq(&t.name, name))
-    })
-    .map(|(id, name, secs, timer_name, display)| Trigger {
-        id: id.into(),
-        name: name.into(),
-        enabled: true,
-        search: crate::engine::you_hit_by_spell_pattern(name),
-        use_regex: true,
-        display_text: display.map(str::to_string),
-        timer_seconds: Some(secs),
-        timer_name: Some(timer_name.into()),
-        early_end: early_end.clone(),
-        sound: None,
-        speak: display.map(str::to_string),
-        tts_enabled: display.is_some(),
-        comments: Some(
-            "EQL: match your land hit — shared emotes fire for any caster; ranks OK".into(),
-        ),
-    })
-    .collect();
+            .any(|t| t.name == name || spell_basename_eq(&t.name, name));
+        if exists {
+            continue;
+        }
+        let search = if search.is_empty() {
+            crate::engine::you_hit_by_spell_pattern(name)
+        } else {
+            search.to_string()
+        };
+        library.groups[idx].triggers.push(Trigger {
+            id: id.into(),
+            name: name.into(),
+            enabled: true,
+            search,
+            use_regex: true,
+            display_text: display.map(str::to_string),
+            timer_seconds: Some(secs),
+            timer_name: Some(timer_name.into()),
+            early_end: early_end.clone(),
+            sound: None,
+            speak: display.map(str::to_string),
+            tts_enabled: true,
+            comments: Some(comments.into()),
+        });
+        changed += 1;
+    }
 
-    let n = missing.len();
-    library.groups[idx].triggers.extend(missing);
-    n
+    changed
+}
+
+
+/// Ensure Spirit of the Puma self-buff timer exists in Shaman Buffs / Self.
+pub fn ensure_shaman_buffs(library: &mut TriggerLibrary) -> usize {
+    let Some(idx) = library.groups.iter().position(|g| {
+        g.id == "class-68ef1f9bea"
+            || g.name == "Classes / Shaman / Buffs / Self"
+            || g.name.contains("Shaman / Buffs / Self")
+    }) else {
+        return 0;
+    };
+
+    let trigger = shaman_puma_trigger();
+    let existing = &mut library.groups[idx];
+    if existing
+        .triggers
+        .iter()
+        .any(|t| t.id == trigger.id || t.name == trigger.name)
+    {
+        return 0;
+    }
+
+    // Place near Spirit of Cheetah when present.
+    let insert_at = existing
+        .triggers
+        .iter()
+        .position(|t| t.name == "Spirit of Cheetah")
+        .map(|i| i + 1)
+        .unwrap_or(existing.triggers.len());
+    existing.triggers.insert(insert_at, trigger);
+    1
+}
+
+fn shaman_puma_trigger() -> Trigger {
+    t_timer_regex(
+        "eql-shm-spirit-of-the-puma",
+        "Spirit of the Puma",
+        r"^You begin to snarl as your features become feline\.$",
+        None,
+        Some("Puma"),
+        None,
+        85,
+        "Spirit of the Puma",
+        vec![
+            r"^The spirit of the puma departs\.$",
+            r"^You have been slain by (?:[^!]+)\!$",
+            r"^clearbuffs? is not online at this time\.$",
+        ],
+        Some("EQL: ~85s self proc buff (not wiki 60s)"),
+    )
 }
 
 fn spell_basename_eq(trigger_name: &str, want: &str) -> bool {
@@ -1209,6 +1519,8 @@ mod tests {
         assert!(ids.contains(&"eql-shm-slow-resisted"));
         assert!(ids.contains(&"eql-shm-malo-landed"));
         assert!(ids.contains(&"eql-shm-malo-resisted"));
+        assert!(ids.contains(&"eql-shm-incap-landed"));
+        assert!(ids.contains(&"eql-shm-incap-resisted"));
     }
 
     #[test]
@@ -1240,7 +1552,7 @@ mod tests {
                 ],
             }],
         };
-        assert_eq!(ensure_shaman_warnings(&mut lib), 4);
+        assert_eq!(ensure_shaman_warnings(&mut lib), 6);
         assert_eq!(ensure_shaman_warnings(&mut lib), 0);
         let names: Vec<_> = lib.groups[0]
             .triggers
@@ -1256,6 +1568,8 @@ mod tests {
                 "Maloed",
                 "Malo Resisted",
                 "Malo Wore Off",
+                "Incapacitate",
+                "Incapacitate Resisted",
             ]
         );
     }
@@ -1338,6 +1652,133 @@ mod tests {
         assert!(ensure_eql_mez_timers(&mut lib) >= 2);
         assert_eq!(lib.groups[0].triggers[0].timer_seconds, Some(30));
         assert!(lib.groups[0].triggers.iter().any(|t| t.id == "eql-dazzle-mez"));
+    }
+
+    #[test]
+    fn ensure_eql_mez_adds_eql_worn_off_of_target() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "cc".into(),
+                name: "Classes / Enchanter / Crowd Control".into(),
+                enabled: false,
+                triggers: vec![
+                    Trigger {
+                        id: "e".into(),
+                        name: "Entrance".into(),
+                        enabled: true,
+                        search: "x".into(),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(72),
+                        timer_name: Some("Entrance".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                    Trigger {
+                        id: "f".into(),
+                        name: "Fascination".into(),
+                        enabled: true,
+                        search: r"^([\w -'`]+) has been fascinated\.$".into(),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(36),
+                        timer_name: Some("Fascination".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                ],
+            }],
+        };
+        assert!(ensure_eql_mez_timers(&mut lib) > 0);
+        let entrance = lib.groups[0]
+            .triggers
+            .iter()
+            .find(|t| t.name == "Entrance")
+            .unwrap();
+        assert_eq!(entrance.timer_name.as_deref(), Some("Entrance - ${1}"));
+        assert!(entrance
+            .early_end
+            .iter()
+            .any(|e| e.contains("worn off of ${1}")));
+        let fasc = lib.groups[0]
+            .triggers
+            .iter()
+            .find(|t| t.name == "Fascination")
+            .unwrap();
+        assert_eq!(fasc.timer_name.as_deref(), Some("Fascination - ${1}"));
+        assert!(fasc
+            .early_end
+            .iter()
+            .any(|e| e.contains("worn off of ${1}")));
+    }
+
+    #[test]
+    fn ensure_divine_invulnerability_adds_aura_duration() {
+        let mut lib = TriggerLibrary {
+            groups: vec![
+                TriggerGroup {
+                    id: "c".into(),
+                    name: "Classes / Cleric / Invulnerability".into(),
+                    enabled: false,
+                    triggers: vec![Trigger {
+                        id: "cd".into(),
+                        name: "Divine Aura Cooldown".into(),
+                        enabled: true,
+                        search: r"^(The gods have rendered you invulnerable|You have finished memorizing Divine Aura)\.$".into(),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(900),
+                        timer_name: Some("Divine Aura Cooldown".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: true,
+                        comments: None,
+                    }],
+                },
+                TriggerGroup {
+                    id: "p".into(),
+                    name: "Classes / Paladin / Invulnerability".into(),
+                    enabled: false,
+                    triggers: vec![Trigger {
+                        id: "pcd".into(),
+                        name: "Divine Aura Cooldown".into(),
+                        enabled: true,
+                        search: "old".into(),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(900),
+                        timer_name: Some("Divine Aura Cooldown".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: true,
+                        comments: None,
+                    }],
+                },
+            ],
+        };
+        assert!(ensure_divine_invulnerability(&mut lib) >= 2);
+        for g in &lib.groups {
+            assert!(g.triggers.iter().any(|t| {
+                t.name == "Divine Aura" && t.timer_seconds == Some(18)
+            }));
+            let cd = g
+                .triggers
+                .iter()
+                .find(|t| t.name == "Divine Aura Cooldown")
+                .unwrap();
+            assert!(cd.search.contains("You are surrounded by a divine aura"));
+        }
+        assert!(lib.groups[0].triggers.iter().any(|t| {
+            t.name == "Divine Barrier" && t.timer_seconds == Some(18)
+        }));
     }
 
     #[test]
@@ -1690,13 +2131,21 @@ mod tests {
         let _ = ensure_eql_disease_dot_timers(&mut lib);
         let mut engine = TriggerEngine::new(lib);
 
-        let odium = engine.process_action(
-            "You hit a lava guardian for 120 points of curse damage by Odium III.",
-        );
+        // Shared land emote — only after your Odium cast.
+        assert!(engine
+            .process_action("a lava guardian staggers under a dark curse.")
+            .is_empty());
+        engine.process_action("You begin casting Odium III.");
+        let odium = engine
+            .process_action("a lava guardian staggers under a dark curse.");
         assert_eq!(odium.len(), 1);
         assert_eq!(
             odium[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Odium - a lava guardian")
+        );
+        assert_eq!(
+            odium[0].speak.as_deref(),
+            Some("a lava guardian Odium")
         );
 
         let bolt = engine.process_action(
@@ -1716,5 +2165,106 @@ mod tests {
             plague[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Plague - a lava guardian")
         );
+        assert_eq!(
+            plague[0].speak.as_deref(),
+            Some("a lava guardian Plagued")
+        );
+    }
+
+    #[test]
+    fn ensure_shaman_dots_enables_plague_tts_and_odium_land() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![
+                    Trigger {
+                        id: "eql-shaman-odium".into(),
+                        name: "Odium".into(),
+                        enabled: true,
+                        search: crate::engine::you_hit_by_spell_pattern("Odium"),
+                        use_regex: true,
+                        display_text: Some("${1} Odium".into()),
+                        timer_seconds: Some(30),
+                        timer_name: Some("Odium - ${1}".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: Some("${1} Odium".into()),
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                    Trigger {
+                        id: "eql-shaman-plague".into(),
+                        name: "Plague".into(),
+                        enabled: true,
+                        search: crate::engine::you_hit_by_spell_pattern("Plague"),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(132),
+                        timer_name: Some("Plague - ${1}".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: None,
+                        tts_enabled: false,
+                        comments: None,
+                    },
+                ],
+            }],
+        };
+        assert_eq!(ensure_shaman_dots(&mut lib), 3);
+        assert_eq!(ensure_shaman_dots(&mut lib), 0);
+
+        let odium = lib.groups[0]
+            .triggers
+            .iter()
+            .find(|t| t.name == "Odium")
+            .unwrap();
+        assert!(odium.search.contains("staggers under a dark curse"));
+        assert!(odium.tts_enabled);
+
+        let plague = lib.groups[0]
+            .triggers
+            .iter()
+            .find(|t| t.name == "Plague")
+            .unwrap();
+        assert_eq!(plague.speak.as_deref(), Some("${1} Plagued"));
+        assert!(plague.tts_enabled);
+    }
+
+    #[test]
+    fn ensure_shaman_buffs_adds_puma_once() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "class-68ef1f9bea".into(),
+                name: "Classes / Shaman / Buffs / Self".into(),
+                enabled: false,
+                triggers: vec![t_timer_regex(
+                    "f0a20f45cc96-4",
+                    "Spirit of Cheetah",
+                    r"^You feel the spirit of cheetah enter you\.$",
+                    None,
+                    None,
+                    None,
+                    48,
+                    "Spirit of Cheetah",
+                    vec![r"^The spirit of cheetah fades\.$"],
+                    None,
+                )],
+            }],
+        };
+        assert_eq!(ensure_shaman_buffs(&mut lib), 1);
+        assert_eq!(ensure_shaman_buffs(&mut lib), 0);
+        let names: Vec<_> = lib.groups[0]
+            .triggers
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Spirit of Cheetah", "Spirit of the Puma"]);
+        let puma = &lib.groups[0].triggers[1];
+        assert_eq!(puma.id, "eql-shm-spirit-of-the-puma");
+        assert_eq!(puma.timer_seconds, Some(85));
+        assert_eq!(puma.speak.as_deref(), Some("Puma"));
+        assert!(puma.tts_enabled);
     }
 }

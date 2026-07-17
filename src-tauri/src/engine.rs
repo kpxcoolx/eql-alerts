@@ -219,6 +219,8 @@ fn required_recent_casts(compiled: &CompiledTrigger) -> Option<Vec<String>> {
                 .map(str::to_string)
                 .collect(),
         ),
+        "Odium" => Some(vec!["odium".to_string()]),
+        "Incapacitate" => Some(vec!["incapacitate".to_string()]),
         _ => {
             let group = compiled.group_name.to_ascii_lowercase();
             if !group.contains("crowd control") {
@@ -519,7 +521,9 @@ impl TriggerEngine {
             }
             name == &want
                 || (want.starts_with("mesmerize")
-                    && (name == "dazzle" || name.starts_with("mesmerize")))
+                    && (name == "dazzle"
+                        || name == "fascination"
+                        || name.starts_with("mesmerize")))
                 || (name.starts_with("mesmerize") && want.starts_with("mesmerize"))
         })
     }
@@ -747,13 +751,18 @@ impl TriggerEngine {
                         .clone()
                         .unwrap_or_else(|| compiled.trigger.name.clone());
 
-                    // Dazzle shares "has been mesmerized" with Mesmerize on EQL.
+                    // Dazzle/Fascination share "has been mesmerized" with Mesmerize on EQL.
                     let dazzle_pending = self.has_recent_cast("dazzle", now);
+                    let fascination_pending = self.has_recent_cast("fascination", now);
                     let is_mesmerize_land = name_template.starts_with("Mesmerize");
                     if dazzle_pending && is_mesmerize_land {
                         secs = 96;
                         name_template = "Dazzle - ${1}".to_string();
                         self.pending_casts.retain(|(n, _)| n != "dazzle");
+                    } else if fascination_pending && is_mesmerize_land {
+                        secs = 36;
+                        name_template = "Fascination - ${1}".to_string();
+                        // keep fascination pending so later AE targets also get timers
                     }
 
                     let timer_name = expand_tokens(
@@ -863,36 +872,48 @@ impl TriggerEngine {
         let secs: u64 = caps.get(3)?.as_str().parse().ok()?;
         let remaining = mins.saturating_mul(60).saturating_add(secs);
 
-        let timer_name = ability.to_string();
-        let legacy_names = legacy_cooldown_names(ability);
+        // Prefer the overlay timer's existing display name when we already track it.
+        let existing_name = self
+            .timers
+            .iter()
+            .find(|t| timer_matches_ability(&t.name, ability))
+            .map(|t| t.name.clone());
+        let timer_name = existing_name.unwrap_or_else(|| ability.to_string());
 
-        // Ready (0 remaining): drop any stuck overlay timer for this ability.
+        // Ready (0 remaining): clear matching overlay timer and announce.
         if remaining == 0 {
             let cleared: Vec<String> = self
                 .timers
                 .iter()
-                .filter(|t| {
-                    t.name == timer_name || legacy_names.iter().any(|n| t.name == *n)
-                })
+                .filter(|t| timer_matches_ability(&t.name, ability))
                 .map(|t| t.id.clone())
                 .collect();
             if cleared.is_empty() {
-                return None;
+                // Still announce ready so mash-checking works even without a bar.
+                return Some(MatchAction {
+                    alert: None,
+                    sound: None,
+                    speak: Some(format!("{ability} ready")),
+                    started_timer: None,
+                    cleared_timer_ids: vec![],
+                });
             }
             self.timers.retain(|t| !cleared.contains(&t.id));
             return Some(MatchAction {
                 alert: None,
                 sound: None,
-                speak: None,
+                speak: Some(format!("{ability} ready")),
                 started_timer: None,
                 cleared_timer_ids: cleared,
             });
         }
 
         // Avoid spam updates when mash-firing the same remaining second.
-        if let Some(existing) = self.timers.iter().find(|t| {
-            t.name == timer_name || legacy_names.iter().any(|n| t.name == *n)
-        }) {
+        if let Some(existing) = self
+            .timers
+            .iter()
+            .find(|t| timer_matches_ability(&t.name, ability))
+        {
             let left = (existing.ends_ms.saturating_sub(now) + 999) / 1000;
             if left == remaining {
                 return None;
@@ -902,12 +923,12 @@ impl TriggerEngine {
         let duration_secs = self
             .timers
             .iter()
-            .find(|t| t.name == timer_name || legacy_names.iter().any(|n| t.name == *n))
+            .find(|t| timer_matches_ability(&t.name, ability))
             .map(|t| t.duration_secs.max(remaining))
             .unwrap_or(remaining);
 
         self.timers
-            .retain(|t| t.name != timer_name && legacy_names.iter().all(|n| t.name != *n));
+            .retain(|t| !timer_matches_ability(&t.name, ability));
 
         let timer = ActiveTimer {
             id: format!("t{}", self.next_alert_id),
@@ -921,6 +942,7 @@ impl TriggerEngine {
         self.next_alert_id += 1;
         self.timers.push(timer.clone());
 
+        // Quiet update — overlay bar is the signal; ready callout is only at 0.
         Some(MatchAction {
             alert: None,
             sound: None,
@@ -941,12 +963,42 @@ fn ability_cooldown_re() -> &'static Regex {
     })
 }
 
-fn legacy_cooldown_names(ability: &str) -> Vec<&'static str> {
-    if ability == "Lay on Hands" {
-        vec!["Lay Hands Cooldown", "Lay Hands"]
-    } else {
-        vec![]
+fn cooldown_name_key(name: &str) -> String {
+    let mut s = name.trim().to_ascii_lowercase();
+    for suffix in [" cooldown", " cd"] {
+        if let Some(stripped) = s.strip_suffix(suffix) {
+            s = stripped.trim().to_string();
+            break;
+        }
     }
+    // Drop trailing roman ranks: "lay on hands x" / "lay on hands iv"
+    for roman in [
+        " xviii", " xvii", " xvi", " xv", " xiv", " xiii", " xii", " xi", " x", " ix",
+        " viii", " vii", " vi", " v", " iv", " iii", " ii", " i",
+    ] {
+        if let Some(stripped) = s.strip_suffix(roman) {
+            s = stripped.trim().to_string();
+            break;
+        }
+    }
+    s
+}
+
+fn timer_matches_ability(timer_name: &str, ability: &str) -> bool {
+    let a = cooldown_name_key(ability);
+    let t = cooldown_name_key(timer_name);
+    if a.is_empty() || t.is_empty() {
+        return false;
+    }
+    if t == a || t.starts_with(&(a.clone() + " - ")) || a.starts_with(&(t.clone() + " - ")) {
+        return true;
+    }
+    // Classic GINA shortened "Lay Hands" vs EQL "Lay on Hands".
+    let a_compact = a.replace(" on ", " ");
+    let t_compact = t.replace(" on ", " ");
+    t_compact == a_compact
+        || t_compact.starts_with(&(a_compact.clone() + " - "))
+        || a_compact.starts_with(&(t_compact + " - "))
 }
 
 fn bind_character_token(pattern: &str, character: &str, for_regex: bool) -> String {
@@ -1397,6 +1449,72 @@ mod tests {
     }
 
     #[test]
+    fn fascination_cast_remaps_multiple_mesmerized_lands() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "Classes / Enchanter / Crowd Control".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "mez".into(),
+                    name: "Mesmerize".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) has been mesmerized\.$".into(),
+                    use_regex: true,
+                    display_text: Some("".into()),
+                    timer_seconds: Some(24),
+                    timer_name: Some("Mesmerize - ${1}".into()),
+                    early_end: vec![r"^Your Fascination spell has worn off of ${1}\.$".into()],
+                    sound: Some("none".into()),
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action("You begin casting Fascination.");
+        engine.process_action("a goblin has been mesmerized.");
+        engine.process_action("a beetle has been mesmerized.");
+        let mut timers = engine.snapshot().timers;
+        timers.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(timers.len(), 2);
+        assert_eq!(timers[0].name, "Fascination - a beetle");
+        assert_eq!(timers[0].duration_secs, 36);
+        assert_eq!(timers[1].name, "Fascination - a goblin");
+        assert_eq!(timers[1].duration_secs, 36);
+    }
+
+    #[test]
+    fn fascination_without_cast_ignores_other_players_mesmerized() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "Classes / Enchanter / Crowd Control".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "mez".into(),
+                    name: "Mesmerize".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) has been mesmerized\.$".into(),
+                    use_regex: true,
+                    display_text: Some("".into()),
+                    timer_seconds: Some(24),
+                    timer_name: Some("Mesmerize - ${1}".into()),
+                    early_end: vec![],
+                    sound: Some("none".into()),
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action("a goblin has been mesmerized.");
+        assert!(engine.snapshot().timers.is_empty());
+    }
+
+    #[test]
     fn slowed_ignores_other_players_drowsy_yawns() {
         let lib = TriggerLibrary {
             groups: vec![TriggerGroup {
@@ -1432,6 +1550,45 @@ mod tests {
         let yours = engine.process_action("a vampire bat yawns.");
         assert_eq!(yours.len(), 1);
         assert_eq!(yours[0].alert.as_ref().map(|a| a.text.as_str()), Some("a vampire bat Slowed"));
+    }
+
+    #[test]
+    fn incapacitate_ignores_other_players_frail() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "warn".into(),
+                name: "Classes / Shaman / Warnings".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "eql-shm-incap-landed".into(),
+                    name: "Incapacitate".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) looks frail\.$".into(),
+                    use_regex: true,
+                    display_text: Some("${1} Incapacitated".into()),
+                    timer_seconds: None,
+                    timer_name: None,
+                    early_end: vec![],
+                    sound: None,
+                    speak: Some("${1} Incapacitated".into()),
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+
+        assert!(engine
+            .process_action("a vampire bat looks frail.")
+            .is_empty());
+
+        engine.process_action("You begin casting Incapacitate.");
+        let yours = engine.process_action("a vampire bat looks frail.");
+        assert_eq!(yours.len(), 1);
+        assert_eq!(
+            yours[0].speak.as_deref(),
+            Some("a vampire bat Incapacitated")
+        );
     }
 
     #[test]
@@ -1641,7 +1798,45 @@ mod tests {
         assert_eq!(cleared.len(), 1);
         assert!(cleared[0].started_timer.is_none());
         assert_eq!(cleared[0].cleared_timer_ids.len(), 1);
+        assert_eq!(cleared[0].speak.as_deref(), Some("Mend ready"));
         assert!(engine.snapshot().timers.is_empty());
+    }
+
+    #[test]
+    fn syncs_ability_cooldown_matches_legacy_timer_names() {
+        let mut engine = TriggerEngine::new(TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "cd".into(),
+                name: "Classes / Paladin / Cooldown".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "loh".into(),
+                    name: "Lay Hands Cooldown".into(),
+                    enabled: true,
+                    search: r"^You healed .+ by Lay on Hands".into(),
+                    use_regex: true,
+                    display_text: Some("Lay on Hands".into()),
+                    timer_seconds: Some(900),
+                    timer_name: Some("Lay Hands Cooldown".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        });
+        engine.process_action("You healed Kenkyo for 100 hit points by Lay on Hands X.");
+        assert_eq!(engine.snapshot().timers[0].name, "Lay Hands Cooldown");
+
+        let synced = engine.process_action(
+            "You can use the ability Lay on Hands again in 4 minute(s) 12 seconds.",
+        );
+        assert_eq!(synced.len(), 1);
+        assert_eq!(synced[0].started_timer.as_ref().unwrap().name, "Lay Hands Cooldown");
+        let left = (synced[0].started_timer.as_ref().unwrap().ends_ms.saturating_sub(now_ms()) + 999) / 1000;
+        assert_eq!(left, 4 * 60 + 12);
+        assert_eq!(engine.snapshot().timers.len(), 1);
     }
 
     fn flying_kick_trigger() -> Trigger {

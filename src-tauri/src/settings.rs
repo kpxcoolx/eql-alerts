@@ -62,6 +62,8 @@ pub struct AppSettings {
     pub voice_male: String,
     /// Voice callout volume 0.0–1.0 (independent of system volume / chimes).
     pub voice_volume: f64,
+    /// Master switch: when false, live alerts never speak (per-trigger TTS stays as-is).
+    pub tts_enabled: bool,
     /// Preferred audio output device name (`""` = system default).
     pub audio_output_device: String,
     /// When a trigger has voice but no sound, also play this chime (`none` to skip).
@@ -85,6 +87,7 @@ impl Default for AppSettings {
             voice_female: "bf_isabella".to_string(),
             voice_male: "am_michael".to_string(),
             voice_volume: 0.2,
+            tts_enabled: true,
             audio_output_device: String::new(),
             default_alert_sound: "none".to_string(),
         }

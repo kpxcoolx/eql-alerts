@@ -75,7 +75,9 @@ use eql_compat::strip_permanent_buff_timers;
 use starter::{
     ensure_essentials, apply_gameplay_essentials_defaults, demote_optional_essentials,
     ensure_default_tts, ensure_eql_ability_timers, ensure_eql_disease_dot_timers,
-    ensure_eql_mez_timers, ensure_shaman_dots, ensure_shaman_warnings, is_placeholder_library,
+    ensure_divine_invulnerability, ensure_eql_mez_timers, ensure_shaman_buffs, ensure_shaman_dots,
+    ensure_shaman_warnings,
+    is_placeholder_library,
     starter_pack, starter_stats,
 };
 use std::fs;
@@ -174,7 +176,13 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
     if ensure_shaman_dots(&mut parsed) > 0 {
         dirty = true;
     }
+    if ensure_shaman_buffs(&mut parsed) > 0 {
+        dirty = true;
+    }
     if ensure_eql_mez_timers(&mut parsed) > 0 {
+        dirty = true;
+    }
+    if ensure_divine_invulnerability(&mut parsed) > 0 {
         dirty = true;
     }
     if ensure_eql_disease_dot_timers(&mut parsed) > 0 {
@@ -330,7 +338,12 @@ fn start_monitoring_inner(
             // Engine already chose speak (TTS on) vs sound (TTS off).
             // Do not auto-inject a chime on top of voice — that masked callouts.
             let sound = action.sound.clone();
-            let _ = tts::play_alert(sound.as_deref(), action.speak.as_deref(), &voice_id, volume);
+            let speak = if settings.tts_enabled {
+                action.speak.as_deref()
+            } else {
+                None
+            };
+            let _ = tts::play_alert(sound.as_deref(), speak, &voice_id, volume);
         }
         let _ = emit_state(&state_clone, &app_handle);
     })?;
@@ -630,7 +643,12 @@ fn test_trigger(
     apply_audio_output(&settings);
     let voice_id = active_voice_id(&settings);
     let volume = settings.voice_volume;
-    let _ = tts::play_alert(action.sound.as_deref(), action.speak.as_deref(), &voice_id, volume);
+    let speak = if settings.tts_enabled {
+        action.speak.as_deref()
+    } else {
+        None
+    };
+    let _ = tts::play_alert(action.sound.as_deref(), speak, &voice_id, volume);
 
     Ok(emit_state(&state, &app))
 }

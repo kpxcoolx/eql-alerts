@@ -361,6 +361,15 @@ button {
   background: rgba(224, 168, 74, 0.22);
 }
 
+.sidebar-tool-btn.muted {
+  opacity: 0.72;
+  color: var(--muted);
+}
+
+.sidebar-tool-btn.muted svg {
+  color: var(--muted);
+}
+
 .sidebar-status {
   display: flex;
   align-items: center;
