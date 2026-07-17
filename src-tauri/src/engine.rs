@@ -1188,7 +1188,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn plain_search_fires_text() {
+    fn zoning_regex_fires_only_on_exact_load_line() {
         let lib = TriggerLibrary {
             groups: vec![TriggerGroup {
                 id: "g".into(),
@@ -1198,8 +1198,8 @@ mod tests {
                     id: "zoning".into(),
                     name: "Zoning".into(),
                     enabled: true,
-                    search: "LOADING, PLEASE WAIT...".into(),
-                    use_regex: false,
+                    search: r"^LOADING, PLEASE WAIT\.\.\.$".into(),
+                    use_regex: true,
                     display_text: Some("Zoning…".into()),
                     timer_seconds: None,
                     timer_name: None,
@@ -1212,11 +1212,77 @@ mod tests {
             }],
         };
         let mut engine = TriggerEngine::new(lib);
-        let actions = engine.process_action("LOADING, PLEASE WAIT...");
-        assert!(actions.iter().any(|a| {
+        let real = engine.process_action("LOADING, PLEASE WAIT...");
+        assert!(real.iter().any(|a| {
             a.alert
                 .as_ref()
                 .map(|al| al.text.contains("Zoning"))
+                .unwrap_or(false)
+        }));
+
+        let mut engine = TriggerEngine::new(TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "G".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "zoning".into(),
+                    name: "Zoning".into(),
+                    enabled: true,
+                    search: r"^LOADING, PLEASE WAIT\.\.\.$".into(),
+                    use_regex: true,
+                    display_text: Some("Zoning…".into()),
+                    timer_seconds: None,
+                    timer_name: None,
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        });
+        let chat = engine.process_action(
+            "Inquisitor tells general1:1, 'LOADING, PLEASE WAIT...'",
+        );
+        assert!(!chat.iter().any(|a| {
+            a.alert
+                .as_ref()
+                .map(|al| al.text.contains("Zoning"))
+                .unwrap_or(false)
+        }));
+    }
+
+    #[test]
+    fn plain_search_fires_text() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "G".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "ping".into(),
+                    name: "Ping".into(),
+                    enabled: true,
+                    search: "hello world".into(),
+                    use_regex: false,
+                    display_text: Some("Ping".into()),
+                    timer_seconds: None,
+                    timer_name: None,
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        let actions = engine.process_action("say hello world please");
+        assert!(actions.iter().any(|a| {
+            a.alert
+                .as_ref()
+                .map(|al| al.text.contains("Ping"))
                 .unwrap_or(false)
         }));
     }

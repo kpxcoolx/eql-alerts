@@ -132,14 +132,14 @@ fn essentials_groups() -> Vec<TriggerGroup> {
             name: "EQL Essentials / Core".to_string(),
             enabled: true,
             triggers: vec![
-                t(
+                t_regex(
                     "eql-essentials-zoning",
                     "Zoning",
-                    "LOADING, PLEASE WAIT...",
+                    r"^LOADING, PLEASE WAIT\.\.\.$",
+                    Some("Zoning…"),
                     Some("Zoning…"),
                     None,
-                    None,
-                    Some("Core — always useful while learning"),
+                    Some("Anchored full-line match — real zone loads only (not chat quoting LOADING)"),
                 ),
                 t_timer(
                     "eql-essentials-slain",
@@ -661,6 +661,22 @@ pub fn ensure_eql_ability_timers(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
         for trigger in &mut group.triggers {
+            if trigger.id == "eql-essentials-zoning" {
+                let before = serde_json::to_string(trigger).unwrap_or_default();
+                // Old plain substring matched chat that quotes the loading line.
+                if trigger.search == "LOADING, PLEASE WAIT..." {
+                    trigger.search = r"^LOADING, PLEASE WAIT\.\.\.$".to_string();
+                    trigger.use_regex = true;
+                    trigger.comments = Some(
+                        "Anchored full-line match — real zone loads only (not chat quoting LOADING)"
+                            .to_string(),
+                    );
+                }
+                let after = serde_json::to_string(trigger).unwrap_or_default();
+                if before != after {
+                    changed += 1;
+                }
+            }
             if trigger.id == "eql-essentials-interrupted" {
                 let before = serde_json::to_string(trigger).unwrap_or_default();
                 // Old plain "spell is interrupted" matched every NPC/player interrupt in zone.
@@ -1450,6 +1466,17 @@ mod tests {
         assert!(oom.use_regex);
         assert!(oom.search.starts_with('^'));
 
+        let zoning = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.id == "eql-essentials-zoning")
+            .expect("zoning");
+        assert!(zoning.use_regex);
+        assert_eq!(zoning.search, r"^LOADING, PLEASE WAIT\.\.\.$");
+        assert_eq!(zoning.display_text.as_deref(), Some("Zoning…"));
+        assert_eq!(zoning.speak.as_deref(), Some("Zoning…"));
+
         let low_pet = pack
             .groups
             .iter()
@@ -1622,6 +1649,37 @@ mod tests {
             lib.groups[0].triggers[1].timer_name.as_deref(),
             Some("Lay on Hands")
         );
+        assert_eq!(ensure_eql_ability_timers(&mut lib), 0);
+    }
+
+    #[test]
+    fn ensure_eql_ability_timers_anchors_zoning_search() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "eql-essentials-core".into(),
+                name: "EQL Essentials / Core".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "eql-essentials-zoning".into(),
+                    name: "Zoning".into(),
+                    enabled: true,
+                    search: "LOADING, PLEASE WAIT...".into(),
+                    use_regex: false,
+                    display_text: Some("Zoning…".into()),
+                    timer_seconds: None,
+                    timer_name: None,
+                    early_end: vec![],
+                    sound: None,
+                    speak: Some("Zoning…".into()),
+                    tts_enabled: true,
+                    comments: Some("Core — always useful while learning".into()),
+                }],
+            }],
+        };
+        assert!(ensure_eql_ability_timers(&mut lib) >= 1);
+        let zoning = &lib.groups[0].triggers[0];
+        assert!(zoning.use_regex);
+        assert_eq!(zoning.search, r"^LOADING, PLEASE WAIT\.\.\.$");
         assert_eq!(ensure_eql_ability_timers(&mut lib), 0);
     }
 
