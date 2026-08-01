@@ -178,8 +178,9 @@ pub const SPELL_RANK_SUFFIX: &str = r"(?: [IVX]+)?";
 /// Your land-hit line for a DoT/spell, matching any upgrade rank.
 pub fn you_hit_by_spell_pattern(spell: &str) -> String {
     let escaped = regex::escape(spell);
+    // `.+?` — raid names can include commas (`Innoruuk, the Prince of Hate`).
     format!(
-        r"^You hit ([\w -'`]+) for [\d,]+ points of \w+ damage by {escaped}{SPELL_RANK_SUFFIX}\.$"
+        r"^You hit (.+?) for [\d,]+ points of \w+ damage by {escaped}{SPELL_RANK_SUFFIX}\.$"
     )
 }
 

@@ -1212,7 +1212,8 @@ pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
 }
 
 fn odium_land_pattern() -> &'static str {
-    r"^([\w -'`]+) staggers under a dark curse\.$"
+    // `.+?` — raid names can include commas (`Innoruuk, the Prince of Hate`).
+    r"^(.+?) staggers under a dark curse\.$"
 }
 
 /// Short TTS label for a shaman DoT (no mob name — stacked lands need to stay snappy).
@@ -2468,6 +2469,16 @@ mod tests {
             Some("Odium - a lava guardian")
         );
         assert_eq!(odium[0].speak.as_deref(), Some("Odium"));
+
+        engine.process_action("You begin casting Odium IV.");
+        let raid = engine.process_action(
+            "Innoruuk, the Prince of Hate staggers under a dark curse.",
+        );
+        assert_eq!(raid.len(), 1);
+        assert_eq!(
+            raid[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Odium - Innoruuk, the Prince of Hate")
+        );
 
         let bolt = engine.process_action(
             "You hit a lava guardian for 55 points of poison damage by Envenomed Bolt II.",
