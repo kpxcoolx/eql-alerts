@@ -4851,8 +4851,8 @@
         {
           "id": "f0a20f45cc96-3",
           "name": "Voice of the Berserker",
-          "enabled": true,
-          "search": "^You lose yourself in your rage and go berserk\\.$",
+          "enabled": false,
+          "search": "^You begin casting Voice of the Berserker(?: [IVX]+)?\\.$",
           "use_regex": true,
           "display_text": null,
           "timer_seconds": 1200,
@@ -4864,7 +4864,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "tts_enabled": false,
+          "comments": "Off by default — long self-buff, not worth tracking (also shared land line with Rage)"
         },
         {
           "id": "f0a20f45cc96-4",

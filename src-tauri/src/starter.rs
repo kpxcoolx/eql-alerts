@@ -1420,7 +1420,7 @@ fn shaman_cannibalization_trigger() -> Trigger {
     )
 }
 
-/// Ensure Spirit of the Puma self-buff timer exists in Shaman Buffs / Self.
+/// Ensure Spirit of the Puma + patch Voice of the Berserker (shared Rage land line).
 pub fn ensure_shaman_buffs(library: &mut TriggerLibrary) -> usize {
     let Some(idx) = library.groups.iter().position(|g| {
         g.id == "class-68ef1f9bea"
@@ -1430,25 +1430,52 @@ pub fn ensure_shaman_buffs(library: &mut TriggerLibrary) -> usize {
         return 0;
     };
 
-    let trigger = shaman_puma_trigger();
+    let mut changed = 0usize;
     let existing = &mut library.groups[idx];
-    if existing
+
+    // Long self-buff — leave off; Rage shares its land line and false-fired overlays.
+    for trigger in &mut existing.triggers {
+        let is_votb = trigger.id == "f0a20f45cc96-3"
+            || trigger.name == "Voice of the Berserker"
+            || trigger.timer_name.as_deref() == Some("Voice of the Berserker");
+        if !is_votb {
+            continue;
+        }
+        let before = serde_json::to_string(trigger).unwrap_or_default();
+        trigger.enabled = false;
+        trigger.search = r"^You begin casting Voice of the Berserker(?: [IVX]+)?\.$".into();
+        trigger.use_regex = true;
+        trigger.display_text = None;
+        trigger.speak = None;
+        trigger.sound = None;
+        trigger.tts_enabled = false;
+        trigger.comments = Some(
+            "Off by default — long self-buff, not worth tracking (also shared land line with Rage)"
+                .into(),
+        );
+        let after = serde_json::to_string(trigger).unwrap_or_default();
+        if before != after {
+            changed += 1;
+        }
+    }
+
+    let trigger = shaman_puma_trigger();
+    if !existing
         .triggers
         .iter()
         .any(|t| t.id == trigger.id || t.name == trigger.name)
     {
-        return 0;
+        let insert_at = existing
+            .triggers
+            .iter()
+            .position(|t| t.name == "Spirit of Cheetah")
+            .map(|i| i + 1)
+            .unwrap_or(existing.triggers.len());
+        existing.triggers.insert(insert_at, trigger);
+        changed += 1;
     }
 
-    // Place near Spirit of Cheetah when present.
-    let insert_at = existing
-        .triggers
-        .iter()
-        .position(|t| t.name == "Spirit of Cheetah")
-        .map(|i| i + 1)
-        .unwrap_or(existing.triggers.len());
-    existing.triggers.insert(insert_at, trigger);
-    1
+    changed
 }
 
 fn shaman_puma_trigger() -> Trigger {
@@ -2426,6 +2453,50 @@ mod tests {
             .unwrap();
         assert_eq!(plague.speak.as_deref(), Some("${1} Plagued"));
         assert!(plague.tts_enabled);
+    }
+
+    #[test]
+    fn ensure_shaman_buffs_disables_votb() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "class-68ef1f9bea".into(),
+                name: "Classes / Shaman / Buffs / Self".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "f0a20f45cc96-3".into(),
+                    name: "Voice of the Berserker".into(),
+                    enabled: true,
+                    search: r"^You lose yourself in your rage and go berserk\.$".into(),
+                    use_regex: true,
+                    display_text: None,
+                    timer_seconds: Some(1200),
+                    timer_name: Some("Voice of the Berserker".into()),
+                    early_end: vec![r"^Your frenzy fades\.$".into()],
+                    sound: None,
+                    speak: Some("Voice of the Berserker".into()),
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        assert_eq!(ensure_shaman_buffs(&mut lib), 2); // VotB disable + Puma add
+        assert_eq!(ensure_shaman_buffs(&mut lib), 0);
+        let votb = lib.groups[0]
+            .triggers
+            .iter()
+            .find(|t| t.name == "Voice of the Berserker")
+            .unwrap();
+        assert!(!votb.enabled);
+        assert!(!votb.tts_enabled);
+
+        let mut engine = crate::engine::TriggerEngine::new(lib);
+        engine.set_groups_enabled(&["class-68ef1f9bea".into()], true);
+        assert!(engine
+            .process_action("You begin casting Voice of the Berserker.")
+            .is_empty());
+        assert!(engine
+            .process_action("You lose yourself in your rage and go berserk.")
+            .is_empty());
     }
 
     #[test]
