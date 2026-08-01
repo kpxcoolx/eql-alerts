@@ -4946,7 +4946,7 @@
           "id": "eql-shm-cannibalization",
           "name": "Cannibalization",
           "enabled": true,
-          "search": "^You activate Cannibalization\\.$",
+          "search": "^You hit yourself for [\\d,]+ points of \\w+ damage by Cannibalization(?: [IVX]+)?\\.$",
           "use_regex": true,
           "display_text": "Cannibalization",
           "timer_seconds": 180,
@@ -4957,7 +4957,7 @@
           "sound": null,
           "speak": "Cannibalization",
           "tts_enabled": true,
-          "comments": "EQL AA: 3m refresh. Overlay also syncs from \u201cYou can use the ability \u2026 again in \u2026\u201d when you press early."
+          "comments": "EQL AA: 3m refresh \u2014 match self-hit by Cannibalization (not spell Cannibalize). Overlay syncs from ability remaining line."
         },
         {
           "id": "e196515d1184-0",

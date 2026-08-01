@@ -1371,17 +1371,35 @@ pub fn ensure_shaman_cooldowns(library: &mut TriggerLibrary) -> usize {
         return 0;
     };
 
-    let trigger = shaman_cannibalization_trigger();
+    let fresh = shaman_cannibalization_trigger();
     let existing = &mut library.groups[idx];
-    if existing
+    if let Some(trigger) = existing
         .triggers
-        .iter()
-        .any(|t| t.id == trigger.id || t.name == trigger.name)
+        .iter_mut()
+        .find(|t| t.id == fresh.id || t.name == fresh.name)
     {
-        return 0;
+        let before = serde_json::to_string(trigger).unwrap_or_default();
+        // EQL logs begin casting / self-hit — not "You activate …".
+        trigger.search = fresh.search.clone();
+        trigger.use_regex = true;
+        trigger.timer_seconds = Some(180);
+        trigger.timer_name = Some("Cannibalization".into());
+        trigger.display_text = Some("Cannibalization".into());
+        if trigger
+            .speak
+            .as_ref()
+            .map(|s| s.trim().is_empty())
+            .unwrap_or(true)
+        {
+            trigger.speak = Some("Cannibalization".into());
+        }
+        trigger.tts_enabled = true;
+        trigger.comments = fresh.comments.clone();
+        let after = serde_json::to_string(trigger).unwrap_or_default();
+        return if before != after { 1 } else { 0 };
     }
 
-    existing.triggers.insert(0, trigger);
+    existing.triggers.insert(0, fresh);
     1
 }
 
@@ -1389,7 +1407,7 @@ fn shaman_cannibalization_trigger() -> Trigger {
     t_timer_regex(
         "eql-shm-cannibalization",
         "Cannibalization",
-        r"^You activate Cannibalization\.$",
+        r"^You hit yourself for [\d,]+ points of \w+ damage by Cannibalization(?: [IVX]+)?\.$",
         Some("Cannibalization"),
         Some("Cannibalization"),
         None,
@@ -1397,7 +1415,7 @@ fn shaman_cannibalization_trigger() -> Trigger {
         "Cannibalization",
         vec![r"^You have been slain by (?:[^!]+)\!$"],
         Some(
-            "EQL AA: 3m refresh. Overlay also syncs from “You can use the ability … again in …” when you press early.",
+            "EQL AA: 3m refresh — match self-hit by Cannibalization (not spell Cannibalize). Overlay syncs from ability remaining line.",
         ),
     )
 }
@@ -2545,9 +2563,54 @@ mod tests {
         let t = &lib.groups[0].triggers[0];
         assert_eq!(t.id, "eql-shm-cannibalization");
         assert_eq!(t.name, "Cannibalization");
-        assert_eq!(t.search, r"^You activate Cannibalization\.$");
+        assert!(t.search.contains("hit yourself"));
+        assert!(t.search.contains("Cannibalization"));
         assert_eq!(t.timer_seconds, Some(180));
         assert_eq!(t.timer_name.as_deref(), Some("Cannibalization"));
         assert!(t.tts_enabled);
+    }
+
+    #[test]
+    fn ensure_shaman_cooldowns_patches_wrong_activate_pattern() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "class-0ee6d3406a".into(),
+                name: "Classes / Shaman / Cooldowns".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "eql-shm-cannibalization".into(),
+                    name: "Cannibalization".into(),
+                    enabled: true,
+                    search: r"^You activate Cannibalization\.$".into(),
+                    use_regex: true,
+                    display_text: Some("Cannibalization".into()),
+                    timer_seconds: Some(180),
+                    timer_name: Some("Cannibalization".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: Some("Cannibalization".into()),
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        assert_eq!(ensure_shaman_cooldowns(&mut lib), 1);
+        assert_eq!(ensure_shaman_cooldowns(&mut lib), 0);
+        let t = &lib.groups[0].triggers[0];
+        assert!(t.search.contains("hit yourself"));
+
+        let mut engine = crate::engine::TriggerEngine::new(lib);
+        engine.set_groups_enabled(&["class-0ee6d3406a".into()], true);
+        let hit = engine.process_action(
+            "You hit yourself for 1540 points of unresistable damage by Cannibalization I.",
+        );
+        assert_eq!(hit.len(), 1);
+        assert_eq!(
+            hit[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Cannibalization")
+        );
+        assert!(engine
+            .process_action("You hit yourself for 51 points of unresistable damage by Cannibalize.")
+            .is_empty());
     }
 }
