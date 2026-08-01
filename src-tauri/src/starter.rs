@@ -2491,6 +2491,91 @@ mod tests {
         assert!(plague.tts_enabled);
     }
 
+
+    #[test]
+    fn shaman_dot_timer_clears_when_you_slay_mob() {
+        use crate::engine::TriggerEngine;
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "dc9fed12dd5a-3".into(),
+                    name: "Scourge".into(),
+                    enabled: true,
+                    search: crate::engine::you_hit_by_spell_pattern("Scourge"),
+                    use_regex: true,
+                    display_text: Some("Scourge".into()),
+                    timer_seconds: Some(126),
+                    timer_name: Some("Scourge - ${1}".into()),
+                    early_end: vec![
+                        r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$".into(),
+                        r"^cleardots? is not online at this time\.$".into(),
+                    ],
+                    sound: None,
+                    speak: Some("Scourge".into()),
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        let _ = ensure_shaman_dots(&mut lib);
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action(
+            "You hit a fire giant warrior for 80 points of disease damage by Scourge.",
+        );
+        assert_eq!(engine.snapshot().timers.len(), 1);
+        engine.process_action("You have slain a fire giant warrior!");
+        assert!(
+            engine.snapshot().timers.is_empty(),
+            "left: {:?}",
+            engine.snapshot().timers.iter().map(|t| t.name.clone()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn shaman_dot_timer_clears_when_other_slays_case_insensitive() {
+        use crate::engine::TriggerEngine;
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "dc9fed12dd5a-3".into(),
+                    name: "Scourge".into(),
+                    enabled: true,
+                    search: crate::engine::you_hit_by_spell_pattern("Scourge"),
+                    use_regex: true,
+                    display_text: Some("Scourge".into()),
+                    timer_seconds: Some(126),
+                    timer_name: Some("Scourge - ${1}".into()),
+                    early_end: vec![
+                        r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$".into(),
+                    ],
+                    sound: None,
+                    speak: Some("Scourge".into()),
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        let _ = ensure_shaman_dots(&mut lib);
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action(
+            "You hit a fire giant wizard for 80 points of disease damage by Scourge.",
+        );
+        assert_eq!(engine.snapshot().timers.len(), 1);
+        // EQL capitalizes the mob article on other-player kill lines.
+        engine.process_action("A fire giant wizard has been slain by Labobtik!");
+        assert!(
+            engine.snapshot().timers.is_empty(),
+            "left: {:?}",
+            engine.snapshot().timers.iter().map(|t| t.name.clone()).collect::<Vec<_>>()
+        );
+    }
+
     #[test]
     fn ensure_shaman_dots_normalizes_scourge_venom_speak() {
         let mut lib = TriggerLibrary {

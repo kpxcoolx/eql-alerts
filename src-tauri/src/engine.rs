@@ -1,4 +1,4 @@
-use regex::Regex;
+use regex::{Regex, RegexBuilder};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -545,6 +545,17 @@ impl TriggerEngine {
 
         // Early-end pass: clear timers when end text matches.
         let mut cleared = Vec::new();
+
+        // Mob death clears every overlay timer for that target (DoTs, mez, slows…).
+        // EQL also capitalizes the article on other-player kill lines (`A foo` vs `a foo`).
+        if let Some(mob) = parse_slain_mob(action) {
+            for timer in &self.timers {
+                if timer_targets_mob(timer, &mob) && !cleared.contains(&timer.id) {
+                    cleared.push(timer.id.clone());
+                }
+            }
+        }
+
         for compiled in &self.compiled {
             if !compiled.group_enabled || !compiled.trigger.enabled {
                 continue;
@@ -1079,13 +1090,49 @@ fn early_end_pattern_matches(
         if has_unexpanded_capture(&expanded) {
             return false;
         }
-        return Regex::new(&expanded)
+        return RegexBuilder::new(&expanded)
+            .case_insensitive(true)
+            .build()
             .ok()
             .map(|re| re.is_match(action))
             .unwrap_or(false);
     }
     let expanded = expand_tokens(pattern, character, action, Some(captures));
-    !expanded.is_empty() && action.contains(&expanded)
+    !expanded.is_empty()
+        && action
+            .to_ascii_lowercase()
+            .contains(&expanded.to_ascii_lowercase())
+}
+
+/// `You have slain a goblin!` / `A goblin has been slain by Bob!`
+fn parse_slain_mob(action: &str) -> Option<String> {
+    if let Some(rest) = action.strip_prefix("You have slain ") {
+        let name = rest.strip_suffix('!').unwrap_or(rest).trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    if let Some(idx) = action.find(" has been slain by ") {
+        let name = action[..idx].trim();
+        if !name.is_empty() {
+            return Some(name.to_string());
+        }
+    }
+    None
+}
+
+fn timer_targets_mob(timer: &ActiveTimer, mob: &str) -> bool {
+    if timer
+        .captures
+        .first()
+        .is_some_and(|c| c.eq_ignore_ascii_case(mob))
+    {
+        return true;
+    }
+    if let Some((_, name_mob)) = timer.name.rsplit_once(" - ") {
+        return name_mob.eq_ignore_ascii_case(mob);
+    }
+    false
 }
 
 /// Infer `${1}` from timer display names like "Immo - a goblin".
@@ -1458,6 +1505,40 @@ mod tests {
         assert_eq!(left[0].name, "Immo - a beetle");
 
         engine.process_action("You have slain a beetle!");
+        assert!(engine.snapshot().timers.is_empty());
+    }
+
+    #[test]
+    fn slain_clears_timers_when_article_case_differs() {
+        let lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "g".into(),
+                name: "G".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "scourge".into(),
+                    name: "Scourge".into(),
+                    enabled: true,
+                    search: you_hit_by_spell_pattern("Scourge"),
+                    use_regex: true,
+                    display_text: Some("".into()),
+                    timer_seconds: Some(126),
+                    timer_name: Some("Scourge - ${1}".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: false,
+                    comments: None,
+                }],
+            }],
+        };
+        let mut engine = TriggerEngine::new(lib);
+        engine.process_action(
+            "You hit a fire giant wizard for 80 points of disease damage by Scourge.",
+        );
+        assert_eq!(engine.snapshot().timers.len(), 1);
+        // Partner kill — EQL capitalizes the leading article.
+        engine.process_action("A fire giant wizard has been slain by Labobtik!");
         assert!(engine.snapshot().timers.is_empty());
     }
 
