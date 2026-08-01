@@ -327,16 +327,7 @@ fn essentials_groups() -> Vec<TriggerGroup> {
                     Some("Rod - {C}"),
                     300,
                     "Rod - {C}",
-                    Some("EQL: Modulating Rod / Modulation — 300s CD (self)"),
-                ),
-                quiet_timer_regex(
-                    "eql-essentials-modrod-others",
-                    "Modulating Rod (Others)",
-                    r"^([\w -'`]+) modulates\.$",
-                    Some("Rod - ${1}"),
-                    300,
-                    "Rod - ${1}",
-                    Some("EQL: Modulating Rod / Modulation — 300s CD (any player)"),
+                    Some("EQL: Modulating Rod / Modulation — 300s CD (self only)"),
                 ),
             ],
         },
@@ -1328,10 +1319,19 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
 }
 
 
-/// Patch legacy Magician-only Rod Cooldown; all-player timers live in Essentials.
+/// Patch legacy Magician rod + drop the short-lived "others modulate" essential.
 pub fn ensure_modulating_rod(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
+        // Remove raid-wide rod timers — self-only essential replaced them.
+        let before_len = group.triggers.len();
+        group
+            .triggers
+            .retain(|t| t.id != "eql-essentials-modrod-others");
+        if group.triggers.len() != before_len {
+            changed += 1;
+        }
+
         for trigger in &mut group.triggers {
             let is_legacy_rod = trigger.id == "45cb768ec4eb-2"
                 || (trigger.name == "Rod Cooldown"
@@ -1350,7 +1350,7 @@ pub fn ensure_modulating_rod(library: &mut TriggerLibrary) -> usize {
             trigger.tts_enabled = false;
             trigger.speak = None;
             trigger.comments = Some(
-                "Superseded by EQL Essentials / Combat Modulating Rod (all players)".into(),
+                "Superseded by EQL Essentials / Combat Modulating Rod (self only)".into(),
             );
             let after = serde_json::to_string(trigger).unwrap_or_default();
             if before != after {
@@ -2447,7 +2447,7 @@ mod tests {
     }
 
     #[test]
-    fn essentials_modulating_rod_tracks_self_and_others() {
+    fn essentials_modulating_rod_tracks_self_only() {
         let mut lib = starter_pack();
         assert_eq!(ensure_essentials(&mut lib), 0);
         let combat = lib
@@ -2455,20 +2455,14 @@ mod tests {
             .iter()
             .find(|g| g.name == "EQL Essentials / Combat")
             .expect("combat essentials");
-        let self_rod = combat
+        assert!(combat
             .triggers
             .iter()
-            .find(|t| t.id == "eql-essentials-modrod-self")
-            .expect("self rod");
-        let others_rod = combat
+            .any(|t| t.id == "eql-essentials-modrod-self"));
+        assert!(!combat
             .triggers
             .iter()
-            .find(|t| t.id == "eql-essentials-modrod-others")
-            .expect("others rod");
-        assert_eq!(self_rod.timer_seconds, Some(300));
-        assert_eq!(others_rod.timer_seconds, Some(300));
-        assert!(!self_rod.tts_enabled);
-        assert!(!others_rod.tts_enabled);
+            .any(|t| t.id == "eql-essentials-modrod-others"));
 
         let mut engine = crate::engine::TriggerEngine::new(lib);
         engine.set_character(Some("Kenkyo".into()));
@@ -2478,12 +2472,30 @@ mod tests {
             self_hit[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Rod - Kenkyo")
         );
-        let other_hit = engine.process_action("Bogmal modulates.");
-        assert_eq!(other_hit.len(), 1);
-        assert_eq!(
-            other_hit[0].started_timer.as_ref().map(|t| t.name.as_str()),
-            Some("Rod - Bogmal")
-        );
+        assert!(engine.process_action("Bogmal modulates.").is_empty());
+    }
+
+    #[test]
+    fn ensure_modulating_rod_removes_others_trigger() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "eql-essentials-combat".into(),
+                name: "EQL Essentials / Combat".into(),
+                enabled: true,
+                triggers: vec![quiet_timer_regex(
+                    "eql-essentials-modrod-others",
+                    "Modulating Rod (Others)",
+                    r"^([\w -'`]+) modulates\.$",
+                    Some("Rod - ${1}"),
+                    300,
+                    "Rod - ${1}",
+                    None,
+                )],
+            }],
+        };
+        assert_eq!(ensure_modulating_rod(&mut lib), 1);
+        assert!(lib.groups[0].triggers.is_empty());
+        assert_eq!(ensure_modulating_rod(&mut lib), 0);
     }
 
     #[test]
