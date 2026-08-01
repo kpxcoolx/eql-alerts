@@ -3509,7 +3509,7 @@
         {
           "id": "d075f98b2f8e-1",
           "name": "Divine Strength (Others)",
-          "enabled": true,
+          "enabled": false,
           "search": "^([\\w -'`]+) begins to radiate with divine strength\\.$",
           "use_regex": true,
           "display_text": null,
@@ -3521,12 +3521,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "tts_enabled": false,
+          "comments": "Off by default — long others STR buff clutter"
         },
         {
           "id": "d075f98b2f8e-7",
           "name": "Divine Glory (Others)",
-          "enabled": true,
+          "enabled": false,
           "search": "^([\\w -'`]+) begins to radiate with divine glory\\.$",
           "use_regex": true,
           "display_text": null,
@@ -3539,7 +3540,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": null
+          "tts_enabled": false,
+          "comments": "Off by default — long others STR buff clutter"
         }
       ]
     },

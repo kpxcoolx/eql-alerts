@@ -19,6 +19,7 @@ pub fn starter_pack() -> TriggerLibrary {
     let _ = ensure_shaman_buffs(&mut pack);
     let _ = ensure_shaman_cooldowns(&mut pack);
     let _ = ensure_modulating_rod(&mut pack);
+    let _ = ensure_quiet_long_others_buffs(&mut pack);
     let _ = ensure_eql_mez_timers(&mut pack);
     let _ = ensure_divine_invulnerability(&mut pack);
     let _ = ensure_eql_disease_dot_timers(&mut pack);
@@ -1319,6 +1320,37 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
 }
 
 
+/// Turn off long “buffs on other players” timers that spam the overlay (opt-in only).
+pub fn ensure_quiet_long_others_buffs(library: &mut TriggerLibrary) -> usize {
+    let mut changed = 0usize;
+    for group in &mut library.groups {
+        for trigger in &mut group.triggers {
+            let is_long_others = matches!(
+                trigger.id.as_str(),
+                "d075f98b2f8e-1" | "d075f98b2f8e-7"
+            ) || matches!(
+                trigger.name.as_str(),
+                "Divine Strength (Others)" | "Divine Glory (Others)"
+            );
+            if !is_long_others {
+                continue;
+            }
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            trigger.enabled = false;
+            trigger.tts_enabled = false;
+            trigger.speak = None;
+            trigger.sound = None;
+            trigger.comments =
+                Some("Off by default — long others STR buff clutter".into());
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
 /// Patch legacy Magician rod + drop the short-lived "others modulate" essential.
 pub fn ensure_modulating_rod(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
@@ -2562,6 +2594,36 @@ mod tests {
             Some("Rod - Kenkyo")
         );
         assert!(engine.process_action("Bogmal modulates.").is_empty());
+    }
+
+    #[test]
+    fn ensure_quiet_long_others_buffs_disables_divine_str() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "class-pal-others".into(),
+                name: "Classes / Paladin / Buffs / Others".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "d075f98b2f8e-1".into(),
+                    name: "Divine Strength (Others)".into(),
+                    enabled: true,
+                    search: r"^([\w -'`]+) begins to radiate with divine strength\.$".into(),
+                    use_regex: true,
+                    display_text: None,
+                    timer_seconds: Some(3000),
+                    timer_name: Some("Divine Str - ${1}".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: Some("Divine Strength (Others)".into()),
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        assert_eq!(ensure_quiet_long_others_buffs(&mut lib), 1);
+        assert_eq!(ensure_quiet_long_others_buffs(&mut lib), 0);
+        assert!(!lib.groups[0].triggers[0].enabled);
+        assert!(!lib.groups[0].triggers[0].tts_enabled);
     }
 
     #[test]
