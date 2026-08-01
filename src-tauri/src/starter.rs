@@ -19,6 +19,7 @@ pub fn starter_pack() -> TriggerLibrary {
     let _ = ensure_shaman_buffs(&mut pack);
     let _ = ensure_shaman_cooldowns(&mut pack);
     let _ = ensure_modulating_rod(&mut pack);
+    let _ = ensure_promised_renewal(&mut pack);
     let _ = ensure_quiet_long_others_buffs(&mut pack);
     let _ = ensure_eql_mez_timers(&mut pack);
     let _ = ensure_divine_invulnerability(&mut pack);
@@ -329,6 +330,20 @@ fn essentials_groups() -> Vec<TriggerGroup> {
                     300,
                     "Rod - {C}",
                     Some("EQL: Modulating Rod / Modulation — 300s CD (self only)"),
+                ),
+                t_timer_regex(
+                    "eql-essentials-promised-renewal",
+                    "Promised Renewal",
+                    promised_renewal_search(),
+                    Some("Promised Renewal"),
+                    Some("Promised Renewal"),
+                    None,
+                    12,
+                    "Promised Renewal",
+                    promised_renewal_early_end(),
+                    Some(
+                        "EQL: delayed heal in 12s (self) — Promised Renewal + ranks (e.g. V) share land emotes",
+                    ),
                 ),
             ],
         },
@@ -1349,6 +1364,51 @@ pub fn ensure_quiet_long_others_buffs(library: &mut TriggerLibrary) -> usize {
             trigger.sound = None;
             trigger.comments =
                 Some("Off by default — long others STR buff clutter".into());
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
+fn promised_renewal_search() -> &'static str {
+    // Log: "You are promised a divine renewal." (Promised Renewal V shares this emote)
+    r"^You are promised (?:a )?divine (?:renewal|healing)\.$"
+}
+
+fn promised_renewal_early_end() -> Vec<&'static str> {
+    vec![
+        r"^You have been slain by (?:[^!]+)\!$",
+        r"^The promise of divine renewal is fulfilled\.$",
+    ]
+}
+
+/// Keep Promised Renewal (all ranks) on the shared land emotes + 12s timer.
+pub fn ensure_promised_renewal(library: &mut TriggerLibrary) -> usize {
+    let desired = promised_renewal_search();
+    let early = promised_renewal_early_end();
+    let mut changed = 0usize;
+    for group in &mut library.groups {
+        for trigger in &mut group.triggers {
+            if trigger.id != "eql-essentials-promised-renewal" {
+                continue;
+            }
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            trigger.name = "Promised Renewal".into();
+            trigger.search = desired.into();
+            trigger.use_regex = true;
+            trigger.timer_seconds = Some(12);
+            trigger.timer_name = Some("Promised Renewal".into());
+            trigger.display_text = Some("Promised Renewal".into());
+            trigger.speak = Some("Promised Renewal".into());
+            trigger.tts_enabled = true;
+            trigger.early_end = early.iter().map(|s| (*s).to_string()).collect();
+            trigger.comments = Some(
+                "EQL: delayed heal in 12s (self) — Promised Renewal + ranks (e.g. V) share land emotes"
+                    .into(),
+            );
             let after = serde_json::to_string(trigger).unwrap_or_default();
             if before != after {
                 changed += 1;
@@ -2756,6 +2816,74 @@ mod tests {
             Some("Rod - Kenkyo")
         );
         assert!(engine.process_action("Bogmal modulates.").is_empty());
+    }
+
+    #[test]
+    fn essentials_promised_renewal_self_timer() {
+        let mut lib = starter_pack();
+        assert_eq!(ensure_essentials(&mut lib), 0);
+        let combat = lib
+            .groups
+            .iter()
+            .find(|g| g.name == "EQL Essentials / Combat")
+            .expect("combat essentials");
+        let trigger = combat
+            .triggers
+            .iter()
+            .find(|t| t.id == "eql-essentials-promised-renewal")
+            .expect("promised renewal");
+        assert_eq!(trigger.timer_seconds, Some(12));
+
+        let mut engine = crate::engine::TriggerEngine::new(lib);
+        let hit = engine.process_action("You are promised a divine renewal.");
+        assert_eq!(hit.len(), 1);
+        assert_eq!(
+            hit[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Promised Renewal")
+        );
+        assert_eq!(
+            hit[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(12)
+        );
+        // Higher Promised Renewal ranks reuse the same timer name.
+        let ranked = engine.process_action("You are promised divine healing.");
+        assert_eq!(ranked.len(), 1);
+        assert_eq!(
+            ranked[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Promised Renewal")
+        );
+        assert!(engine
+            .process_action("Bogmal is promised a divine renewal.")
+            .is_empty());
+    }
+
+    #[test]
+    fn ensure_promised_renewal_upgrades_narrow_search() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "eql-essentials-combat".into(),
+                name: "EQL Essentials / Combat".into(),
+                enabled: true,
+                triggers: vec![t_timer_regex(
+                    "eql-essentials-promised-renewal",
+                    "Promised Renewal",
+                    r"^You are promised a divine renewal\.$",
+                    Some("Promised Renewal"),
+                    Some("Promised Renewal"),
+                    None,
+                    12,
+                    "Promised Renewal",
+                    vec![],
+                    None,
+                )],
+            }],
+        };
+        assert_eq!(ensure_promised_renewal(&mut lib), 1);
+        assert_eq!(ensure_promised_renewal(&mut lib), 0);
+        assert_eq!(
+            lib.groups[0].triggers[0].search,
+            promised_renewal_search()
+        );
     }
 
     #[test]
