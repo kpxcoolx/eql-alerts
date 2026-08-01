@@ -1,6 +1,7 @@
 {
   "bundle": {
     "resources": [
+      "binaries/eql-speak",
       "resources/tts-kokoro.zip"
     ]
   }

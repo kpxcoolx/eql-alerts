@@ -507,7 +507,9 @@ fn play_file_helper(path: &Path, wait: bool, volume: f64, track_pid: bool) -> Re
             });
             return Ok(());
         }
-        return Err("eql-speak missing".into());
+        // Bundled helper missing (bad Mac pack) — afplay still plays AIFF/WAV.
+        tts_log("eql-speak missing; falling back to afplay");
+        return play_file_afplay(path, wait, volume, track_pid);
     }
 
     #[cfg(target_os = "windows")]
@@ -667,6 +669,44 @@ fn eql_speak_bin() -> Option<PathBuf> {
         }
     }
     candidates.into_iter().find(|p| p.exists())
+}
+
+#[cfg(target_os = "macos")]
+fn play_file_afplay(path: &Path, wait: bool, volume: f64, track_pid: bool) -> Result<(), String> {
+    let volume = clamp_volume(volume);
+    let vol = format!("{volume:.3}");
+    let path_str = path.to_string_lossy().into_owned();
+    tts_log(&format!(
+        "afplay {} vol={volume:.2} wait={wait}",
+        path.display()
+    ));
+    if wait {
+        return run_helper_wait(
+            Path::new("/usr/bin/afplay"),
+            &["-v", &vol, &path_str],
+            track_pid,
+        );
+    }
+    let mut child = Command::new("/usr/bin/afplay")
+        .args(["-v", &vol])
+        .arg(&path_str)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("afplay play: {e}"))?;
+    let pid = child.id();
+    if track_pid {
+        remember_pid(pid);
+    }
+    thread::spawn(move || {
+        let _ = child.wait();
+        if let Ok(mut guard) = LAST_SPEECH_PID.lock() {
+            if *guard == Some(pid) {
+                *guard = None;
+            }
+        }
+    });
+    Ok(())
 }
 
 fn run_helper_wait(bin: &Path, args: &[&str], track_pid: bool) -> Result<(), String> {
