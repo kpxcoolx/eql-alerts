@@ -1200,6 +1200,22 @@ fn odium_land_pattern() -> &'static str {
     r"^([\w -'`]+) staggers under a dark curse\.$"
 }
 
+/// Short TTS label for a shaman DoT (no mob name — stacked lands need to stay snappy).
+fn shaman_dot_speak_label(name: &str) -> String {
+    let base = crate::engine::spell_basename(name).unwrap_or_else(|| name.to_string());
+    match base.as_str() {
+        "Odium" => "Odium".into(),
+        "Plague" => "Plague".into(),
+        "Envenomed Bolt" => "Envenom".into(),
+        "Scourge" => "Scourge".into(),
+        "Venom of the Snake" => "Venom".into(),
+        "Bane of Nife" => "Bane".into(),
+        "Pox of Bertoxxulous" => "Pox".into(),
+        "Curse of the Spirits" => "Curse".into(),
+        other => other.to_string(),
+    }
+}
+
 /// Shaman DoTs that belong in the class pack (Odium / Plague / Envenomed Bolt are EQL shaman spells).
 pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
     let group_name = "Classes / Shaman / Damage Over Time";
@@ -1218,15 +1234,14 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
 
     let mut changed = 0usize;
 
-    // Patch existing Odium / Plague so TTS and Odium land matching stay correct.
+    // Short TTS only — overlay/timer can still show the mob via timer_name / display.
     for trigger in &mut library.groups[idx].triggers {
+        let before = serde_json::to_string(trigger).unwrap_or_default();
+        let label = shaman_dot_speak_label(&trigger.name);
+
         if trigger.id == "eql-shaman-odium" || spell_basename_eq(&trigger.name, "Odium") {
-            let before = serde_json::to_string(trigger).unwrap_or_default();
             trigger.search = odium_land_pattern().into();
             trigger.use_regex = true;
-            trigger.display_text = Some("${1} Odium".into());
-            trigger.speak = Some("${1} Odium".into());
-            trigger.tts_enabled = true;
             if trigger.timer_seconds.unwrap_or(0) == 0 {
                 trigger.timer_seconds = Some(30);
             }
@@ -1237,31 +1252,24 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
                 "EQL: dark curse emote is shared — engine only fires after your Odium cast"
                     .into(),
             );
-            let after = serde_json::to_string(trigger).unwrap_or_default();
-            if before != after {
-                changed += 1;
-            }
-            continue;
         }
-        if trigger.id == "eql-shaman-plague" || spell_basename_eq(&trigger.name, "Plague") {
-            let before = serde_json::to_string(trigger).unwrap_or_default();
-            trigger.display_text = Some("${1} Plagued".into());
-            trigger.speak = Some("${1} Plagued".into());
-            trigger.tts_enabled = true;
-            let after = serde_json::to_string(trigger).unwrap_or_default();
-            if before != after {
-                changed += 1;
-            }
+
+        trigger.display_text = Some(label.clone());
+        trigger.speak = Some(label);
+        trigger.tts_enabled = true;
+
+        let after = serde_json::to_string(trigger).unwrap_or_default();
+        if before != after {
+            changed += 1;
         }
     }
 
-    let specs: Vec<(&str, &str, u64, &str, Option<&str>, &str, &str)> = vec![
+    let specs: Vec<(&str, &str, u64, &str, &str, &str)> = vec![
         (
             "eql-shaman-odium",
             "Odium",
             30,
             "Odium - ${1}",
-            Some("${1} Odium"),
             odium_land_pattern(),
             "EQL: dark curse emote is shared — engine only fires after your Odium cast",
         ),
@@ -1270,7 +1278,6 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
             "Envenomed Bolt",
             48,
             "Envenomed Bolt - ${1}",
-            Some("${1} Envenom Bolted"),
             "",
             "EQL: match your land hit — shared emotes fire for any caster; ranks OK",
         ),
@@ -1279,13 +1286,12 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
             "Plague",
             132,
             "Plague - ${1}",
-            Some("${1} Plagued"),
             "",
             "EQL: match your land hit — shared emotes fire for any caster; ranks OK",
         ),
     ];
 
-    for (id, name, secs, timer_name, display, search, comments) in specs {
+    for (id, name, secs, timer_name, search, comments) in specs {
         let exists = library.groups[idx]
             .triggers
             .iter()
@@ -1298,18 +1304,19 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
         } else {
             search.to_string()
         };
+        let label = shaman_dot_speak_label(name);
         library.groups[idx].triggers.push(Trigger {
             id: id.into(),
             name: name.into(),
             enabled: true,
             search,
             use_regex: true,
-            display_text: display.map(str::to_string),
+            display_text: Some(label.clone()),
             timer_seconds: Some(secs),
             timer_name: Some(timer_name.into()),
             early_end: early_end.clone(),
             sound: None,
-            speak: display.map(str::to_string),
+            speak: Some(label),
             tts_enabled: true,
             comments: Some(comments.into()),
         });
@@ -2250,7 +2257,8 @@ mod tests {
                 }],
             }],
         };
-        assert_eq!(ensure_shaman_dots(&mut lib), 3);
+        // Patch Bane speak + add Odium / Envenomed Bolt / Plague.
+        assert_eq!(ensure_shaman_dots(&mut lib), 4);
         assert_eq!(ensure_shaman_dots(&mut lib), 0);
         let names: Vec<_> = lib.groups[0]
             .triggers
@@ -2260,6 +2268,7 @@ mod tests {
         assert!(names.contains(&"Odium"));
         assert!(names.contains(&"Envenomed Bolt"));
         assert!(names.contains(&"Plague"));
+        assert_eq!(lib.groups[0].triggers[0].speak.as_deref(), Some("Bane"));
     }
 
     #[test]
@@ -2398,10 +2407,7 @@ mod tests {
             odium[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Odium - a lava guardian")
         );
-        assert_eq!(
-            odium[0].speak.as_deref(),
-            Some("a lava guardian Odium")
-        );
+        assert_eq!(odium[0].speak.as_deref(), Some("Odium"));
 
         let bolt = engine.process_action(
             "You hit a lava guardian for 55 points of poison damage by Envenomed Bolt II.",
@@ -2411,6 +2417,7 @@ mod tests {
             bolt[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Envenomed Bolt - a lava guardian")
         );
+        assert_eq!(bolt[0].speak.as_deref(), Some("Envenom"));
 
         let plague = engine.process_action(
             "You hit a lava guardian for 1,234 points of disease damage by Plague IV.",
@@ -2420,10 +2427,7 @@ mod tests {
             plague[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Plague - a lava guardian")
         );
-        assert_eq!(
-            plague[0].speak.as_deref(),
-            Some("a lava guardian Plagued")
-        );
+        assert_eq!(plague[0].speak.as_deref(), Some("Plague"));
     }
 
     #[test]
@@ -2483,8 +2487,81 @@ mod tests {
             .iter()
             .find(|t| t.name == "Plague")
             .unwrap();
-        assert_eq!(plague.speak.as_deref(), Some("${1} Plagued"));
+        assert_eq!(plague.speak.as_deref(), Some("Plague"));
         assert!(plague.tts_enabled);
+    }
+
+    #[test]
+    fn ensure_shaman_dots_normalizes_scourge_venom_speak() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "dots".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
+                enabled: true,
+                triggers: vec![
+                    Trigger {
+                        id: "dc9fed12dd5a-3".into(),
+                        name: "Scourge".into(),
+                        enabled: true,
+                        search: crate::engine::you_hit_by_spell_pattern("Scourge"),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(126),
+                        timer_name: Some("Scourge - ${1}".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: Some("Scourge".into()),
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                    Trigger {
+                        id: "dc9fed12dd5a-4".into(),
+                        name: "Venom of the Snake".into(),
+                        enabled: true,
+                        search: crate::engine::you_hit_by_spell_pattern("Venom of the Snake"),
+                        use_regex: true,
+                        display_text: None,
+                        timer_seconds: Some(42),
+                        timer_name: Some("Venom of the Snake - ${1}".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: Some("Venom of the Snake".into()),
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                    Trigger {
+                        id: "dc9fed12dd5a-0".into(),
+                        name: "Bane of Nife".into(),
+                        enabled: true,
+                        search: crate::engine::you_hit_by_spell_pattern("Bane of Nife"),
+                        use_regex: true,
+                        display_text: Some("${1} Baned of Nifed".into()),
+                        timer_seconds: Some(45),
+                        timer_name: Some("Bane - ${1}".into()),
+                        early_end: vec![],
+                        sound: None,
+                        speak: Some("${1} Baned of Nifed".into()),
+                        tts_enabled: true,
+                        comments: None,
+                    },
+                ],
+            }],
+        };
+        assert!(ensure_shaman_dots(&mut lib) >= 3);
+        assert_eq!(ensure_shaman_dots(&mut lib), 0);
+
+        let by_name = |n: &str| {
+            lib.groups[0]
+                .triggers
+                .iter()
+                .find(|t| t.name == n)
+                .unwrap()
+                .speak
+                .clone()
+        };
+        assert_eq!(by_name("Scourge").as_deref(), Some("Scourge"));
+        assert_eq!(by_name("Venom of the Snake").as_deref(), Some("Venom"));
+        assert_eq!(by_name("Bane of Nife").as_deref(), Some("Bane"));
     }
 
     #[test]

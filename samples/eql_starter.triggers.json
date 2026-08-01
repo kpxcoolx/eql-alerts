@@ -3522,7 +3522,7 @@
           "sound": null,
           "speak": null,
           "tts_enabled": false,
-          "comments": "Off by default — long others STR buff clutter"
+          "comments": "Off by default \u2014 long others STR buff clutter"
         },
         {
           "id": "d075f98b2f8e-7",
@@ -3541,7 +3541,7 @@
           "sound": null,
           "speak": null,
           "tts_enabled": false,
-          "comments": "Off by default — long others STR buff clutter"
+          "comments": "Off by default \u2014 long others STR buff clutter"
         }
       ]
     },
@@ -4867,7 +4867,7 @@
           "sound": null,
           "speak": null,
           "tts_enabled": false,
-          "comments": "Off by default — long self-buff, not worth tracking (also shared land line with Rage)"
+          "comments": "Off by default \u2014 long self-buff, not worth tracking (also shared land line with Rage)"
         },
         {
           "id": "f0a20f45cc96-4",
@@ -4989,7 +4989,7 @@
           "enabled": true,
           "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Bane of Nife(?: [IVX]+)?\\.$",
           "use_regex": true,
-          "display_text": "${1} Baned of Nifed",
+          "display_text": "Bane",
           "timer_seconds": 45,
           "timer_name": "Bane - ${1}",
           "early_end": [
@@ -4997,8 +4997,9 @@
             "^cleardots? is not online at this time\\.$"
           ],
           "sound": null,
-          "speak": "${1} Baned of Nifed",
-          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
+          "speak": "Bane",
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster",
+          "tts_enabled": true
         },
         {
           "id": "dc9fed12dd5a-1",
@@ -5006,7 +5007,7 @@
           "enabled": true,
           "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Curse of the Spirits(?: [IVX]+)?\\.$",
           "use_regex": true,
-          "display_text": null,
+          "display_text": "Curse",
           "timer_seconds": 87,
           "timer_name": "Curse of the Spirits - ${1}",
           "early_end": [
@@ -5014,8 +5015,9 @@
             "^cleardots? is not online at this time\\.$"
           ],
           "sound": null,
-          "speak": null,
-          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
+          "speak": "Curse",
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster",
+          "tts_enabled": true
         },
         {
           "id": "dc9fed12dd5a-2",
@@ -5023,7 +5025,7 @@
           "enabled": true,
           "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Pox of Bertoxxulous(?: [IVX]+)?\\.$",
           "use_regex": true,
-          "display_text": "${1} Pox of Bertoxed",
+          "display_text": "Pox",
           "timer_seconds": 110,
           "timer_name": "Pox - ${1}",
           "early_end": [
@@ -5031,8 +5033,9 @@
             "^cleardots? is not online at this time\\.$"
           ],
           "sound": null,
-          "speak": "${1} Pox of Bertoxed",
-          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster"
+          "speak": "Pox",
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster",
+          "tts_enabled": true
         },
         {
           "id": "dc9fed12dd5a-3",
@@ -5040,7 +5043,7 @@
           "enabled": true,
           "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Scourge(?: [IVX]+)?\\.$",
           "use_regex": true,
-          "display_text": null,
+          "display_text": "Scourge",
           "timer_seconds": 126,
           "timer_name": "Scourge - ${1}",
           "early_end": [
@@ -5049,8 +5052,9 @@
             "^Your Affliction spell has worn off."
           ],
           "sound": null,
-          "speak": null,
-          "comments": "EQL: match your land hit \u2014 feverish line is shared with Sicken/Plague"
+          "speak": "Scourge",
+          "comments": "EQL: match your land hit \u2014 feverish line is shared with Sicken/Plague",
+          "tts_enabled": true
         },
         {
           "id": "dc9fed12dd5a-4",
@@ -5058,7 +5062,7 @@
           "enabled": true,
           "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Venom of the Snake(?: [IVX]+)?\\.$",
           "use_regex": true,
-          "display_text": null,
+          "display_text": "Venom",
           "timer_seconds": 42,
           "timer_name": "Venom of the Snake - ${1}",
           "early_end": [
@@ -5067,8 +5071,9 @@
             "^Your Envenomed Breath spell has worn off."
           ],
           "sound": null,
-          "speak": null,
-          "comments": null
+          "speak": "Venom",
+          "comments": null,
+          "tts_enabled": true
         },
         {
           "id": "eql-shaman-odium",
@@ -5076,7 +5081,7 @@
           "enabled": true,
           "search": "^([\\w -'`]+) staggers under a dark curse\\.$",
           "use_regex": true,
-          "display_text": "${1} Odium",
+          "display_text": "Odium",
           "timer_seconds": 30,
           "timer_name": "Odium - ${1}",
           "early_end": [
@@ -5084,8 +5089,9 @@
             "^cleardots? is not online at this time\\.$"
           ],
           "sound": null,
-          "speak": "${1} Odium",
-          "comments": "EQL: dark curse emote is shared \u2014 engine only fires after your Odium cast"
+          "speak": "Odium",
+          "comments": "EQL: dark curse emote is shared \u2014 engine only fires after your Odium cast",
+          "tts_enabled": true
         },
         {
           "id": "eql-shaman-envenomed-bolt",
@@ -5093,7 +5099,7 @@
           "enabled": true,
           "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Envenomed\\ Bolt(?: [IVX]+)?\\.$",
           "use_regex": true,
-          "display_text": "${1} Envenom Bolted",
+          "display_text": "Envenom",
           "timer_seconds": 48,
           "timer_name": "Envenomed Bolt - ${1}",
           "early_end": [
@@ -5101,8 +5107,9 @@
             "^cleardots? is not online at this time\\.$"
           ],
           "sound": null,
-          "speak": "${1} Envenom Bolted",
-          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster; ranks OK"
+          "speak": "Envenom",
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster; ranks OK",
+          "tts_enabled": true
         },
         {
           "id": "eql-shaman-plague",
@@ -5110,7 +5117,7 @@
           "enabled": true,
           "search": "^You hit ([\\w -'`]+) for [\\d,]+ points of \\w+ damage by Plague(?: [IVX]+)?\\.$",
           "use_regex": true,
-          "display_text": "${1} Plagued",
+          "display_text": "Plague",
           "timer_seconds": 132,
           "timer_name": "Plague - ${1}",
           "early_end": [
@@ -5118,8 +5125,9 @@
             "^cleardots? is not online at this time\\.$"
           ],
           "sound": null,
-          "speak": "${1} Plagued",
-          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster; ranks OK"
+          "speak": "Plague",
+          "comments": "EQL: match your land hit \u2014 shared emotes fire for any caster; ranks OK",
+          "tts_enabled": true
         }
       ]
     },
