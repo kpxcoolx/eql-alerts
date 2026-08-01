@@ -867,7 +867,10 @@ export default function App() {
     const next = { ...base, ...partial };
     setSettings(next);
     try {
-      await invoke("save_app_settings", { settings: next });
+      const saved = await invoke<AppSettings>("save_app_settings", {
+        settings: next,
+      });
+      setSettings(saved);
     } catch (err) {
       setError(String(err));
     }

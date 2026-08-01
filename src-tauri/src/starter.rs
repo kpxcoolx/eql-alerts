@@ -17,6 +17,7 @@ pub fn starter_pack() -> TriggerLibrary {
     let _ = ensure_shaman_warnings(&mut pack);
     let _ = ensure_shaman_dots(&mut pack);
     let _ = ensure_shaman_buffs(&mut pack);
+    let _ = ensure_shaman_cooldowns(&mut pack);
     let _ = ensure_eql_mez_timers(&mut pack);
     let _ = ensure_divine_invulnerability(&mut pack);
     let _ = ensure_eql_disease_dot_timers(&mut pack);
@@ -1282,6 +1283,47 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
 }
 
 
+/// Ensure Cannibalization AA cooldown exists in Shaman / Cooldowns.
+pub fn ensure_shaman_cooldowns(library: &mut TriggerLibrary) -> usize {
+    let Some(idx) = library.groups.iter().position(|g| {
+        g.id == "class-0ee6d3406a"
+            || g.name == "Classes / Shaman / Cooldowns"
+            || g.name.contains("Shaman / Cooldowns")
+    }) else {
+        return 0;
+    };
+
+    let trigger = shaman_cannibalization_trigger();
+    let existing = &mut library.groups[idx];
+    if existing
+        .triggers
+        .iter()
+        .any(|t| t.id == trigger.id || t.name == trigger.name)
+    {
+        return 0;
+    }
+
+    existing.triggers.insert(0, trigger);
+    1
+}
+
+fn shaman_cannibalization_trigger() -> Trigger {
+    t_timer_regex(
+        "eql-shm-cannibalization",
+        "Cannibalization",
+        r"^You activate Cannibalization\.$",
+        Some("Cannibalization"),
+        Some("Cannibalization"),
+        None,
+        180,
+        "Cannibalization",
+        vec![r"^You have been slain by (?:[^!]+)\!$"],
+        Some(
+            "EQL AA: 3m refresh. Overlay also syncs from “You can use the ability … again in …” when you press early.",
+        ),
+    )
+}
+
 /// Ensure Spirit of the Puma self-buff timer exists in Shaman Buffs / Self.
 pub fn ensure_shaman_buffs(library: &mut TriggerLibrary) -> usize {
     let Some(idx) = library.groups.iter().position(|g| {
@@ -2324,5 +2366,26 @@ mod tests {
         assert_eq!(puma.timer_seconds, Some(85));
         assert_eq!(puma.speak.as_deref(), Some("Puma"));
         assert!(puma.tts_enabled);
+    }
+
+    #[test]
+    fn ensure_shaman_cooldowns_adds_cannibalization_once() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "class-0ee6d3406a".into(),
+                name: "Classes / Shaman / Cooldowns".into(),
+                enabled: false,
+                triggers: vec![],
+            }],
+        };
+        assert_eq!(ensure_shaman_cooldowns(&mut lib), 1);
+        assert_eq!(ensure_shaman_cooldowns(&mut lib), 0);
+        let t = &lib.groups[0].triggers[0];
+        assert_eq!(t.id, "eql-shm-cannibalization");
+        assert_eq!(t.name, "Cannibalization");
+        assert_eq!(t.search, r"^You activate Cannibalization\.$");
+        assert_eq!(t.timer_seconds, Some(180));
+        assert_eq!(t.timer_name.as_deref(), Some("Cannibalization"));
+        assert!(t.tts_enabled);
     }
 }

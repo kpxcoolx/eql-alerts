@@ -75,8 +75,8 @@ use eql_compat::strip_permanent_buff_timers;
 use starter::{
     ensure_essentials, apply_gameplay_essentials_defaults, demote_optional_essentials,
     ensure_default_tts, ensure_eql_ability_timers, ensure_eql_disease_dot_timers,
-    ensure_divine_invulnerability, ensure_eql_mez_timers, ensure_shaman_buffs, ensure_shaman_dots,
-    ensure_shaman_warnings,
+    ensure_divine_invulnerability, ensure_eql_mez_timers, ensure_shaman_buffs,
+    ensure_shaman_cooldowns, ensure_shaman_dots, ensure_shaman_warnings,
     is_placeholder_library,
     starter_pack, starter_stats,
 };
@@ -177,6 +177,9 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
         dirty = true;
     }
     if ensure_shaman_buffs(&mut parsed) > 0 {
+        dirty = true;
+    }
+    if ensure_shaman_cooldowns(&mut parsed) > 0 {
         dirty = true;
     }
     if ensure_eql_mez_timers(&mut parsed) > 0 {
@@ -458,6 +461,7 @@ fn save_app_settings(settings: AppSettings, app: AppHandle) -> Result<AppSetting
     };
     sync_voice_slots(&mut merged);
     merged.voice_volume = settings.voice_volume.clamp(0.0, 1.0);
+    merged.tts_enabled = settings.tts_enabled;
     merged.audio_output_device = settings.audio_output_device.trim().to_string();
     merged.default_alert_sound = settings.default_alert_sound;
     if settings.main_window.is_some() {

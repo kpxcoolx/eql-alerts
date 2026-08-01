@@ -60,6 +60,10 @@ jobs:
         shell: pwsh
         run: ./scripts/pack_kokoro_windows.ps1
 
+      - name: Pack Kokoro TTS for macOS app
+        if: runner.os == 'macOS'
+        run: bash ./scripts/pack_kokoro_macos.sh
+
       # Always create a DRAFT first. Publishing happens only after we verify
       # Windows + Mac updater assets exist — never leave a broken "Latest".
       - name: Build installer (draft release)
@@ -85,6 +89,8 @@ jobs:
             and Parallels mounts under `/Volumes`.
 
             Windows first launch extracts TTS models into `%LOCALAPPDATA%` (one-time).
+            Mac first launch extracts TTS models into
+            `~/Library/Application Support/com.eqlegends.alerts/` (one-time).
             After this build, use **Check for updates** for future releases.
           releaseDraft: true
           prerelease: false

@@ -4942,6 +4942,23 @@
       "enabled": false,
       "triggers": [
         {
+          "id": "eql-shm-cannibalization",
+          "name": "Cannibalization",
+          "enabled": true,
+          "search": "^You activate Cannibalization\\.$",
+          "use_regex": true,
+          "display_text": "Cannibalization",
+          "timer_seconds": 180,
+          "timer_name": "Cannibalization",
+          "early_end": [
+            "^You have been slain by (?:[^!]+)\\!$"
+          ],
+          "sound": null,
+          "speak": "Cannibalization",
+          "tts_enabled": true,
+          "comments": "EQL AA: 3m refresh. Overlay also syncs from \u201cYou can use the ability \u2026 again in \u2026\u201d when you press early."
+        },
+        {
           "id": "e196515d1184-0",
           "name": "Slam Cooldown",
           "enabled": true,
