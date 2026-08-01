@@ -2525,16 +2525,17 @@
         {
           "id": "45cb768ec4eb-2",
           "name": "Rod Cooldown",
-          "enabled": true,
-          "search": "^You modulate.",
+          "enabled": false,
+          "search": "^You modulate\\.$",
           "use_regex": true,
-          "display_text": "Rod Used",
+          "display_text": "Rod - {C}",
           "timer_seconds": 300,
-          "timer_name": "Rod Cooldown",
+          "timer_name": "Rod - {C}",
           "early_end": [],
           "sound": null,
           "speak": null,
-          "comments": null
+          "tts_enabled": false,
+          "comments": "Superseded by EQL Essentials / Combat Modulating Rod (all players)"
         }
       ]
     },

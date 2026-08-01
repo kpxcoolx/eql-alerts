@@ -75,8 +75,9 @@ use eql_compat::strip_permanent_buff_timers;
 use starter::{
     ensure_essentials, apply_gameplay_essentials_defaults, demote_optional_essentials,
     ensure_default_tts, ensure_eql_ability_timers, ensure_eql_disease_dot_timers,
-    ensure_divine_invulnerability, ensure_eql_mez_timers, ensure_shaman_buffs,
-    ensure_shaman_cooldowns, ensure_shaman_dots, ensure_shaman_warnings,
+    ensure_divine_invulnerability, ensure_eql_mez_timers, ensure_modulating_rod,
+    ensure_shaman_buffs, ensure_shaman_cooldowns, ensure_shaman_dots,
+    ensure_shaman_warnings,
     is_placeholder_library,
     starter_pack, starter_stats,
 };
@@ -180,6 +181,9 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
         dirty = true;
     }
     if ensure_shaman_cooldowns(&mut parsed) > 0 {
+        dirty = true;
+    }
+    if ensure_modulating_rod(&mut parsed) > 0 {
         dirty = true;
     }
     if ensure_eql_mez_timers(&mut parsed) > 0 {

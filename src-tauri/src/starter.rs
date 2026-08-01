@@ -18,6 +18,7 @@ pub fn starter_pack() -> TriggerLibrary {
     let _ = ensure_shaman_dots(&mut pack);
     let _ = ensure_shaman_buffs(&mut pack);
     let _ = ensure_shaman_cooldowns(&mut pack);
+    let _ = ensure_modulating_rod(&mut pack);
     let _ = ensure_eql_mez_timers(&mut pack);
     let _ = ensure_divine_invulnerability(&mut pack);
     let _ = ensure_eql_disease_dot_timers(&mut pack);
@@ -109,6 +110,32 @@ fn t_timer_regex(
         comments,
     );
     trigger.use_regex = true;
+    trigger
+}
+
+/// Overlay timer only — no TTS/chime (raid-wide clicky spam).
+fn quiet_timer_regex(
+    id: &str,
+    name: &str,
+    search: &str,
+    display: Option<&str>,
+    timer_seconds: u64,
+    timer_name: &str,
+    comments: Option<&str>,
+) -> Trigger {
+    let mut trigger = t_timer_regex(
+        id,
+        name,
+        search,
+        display,
+        None,
+        None,
+        timer_seconds,
+        timer_name,
+        vec![],
+        comments,
+    );
+    trigger.tts_enabled = false;
     trigger
 }
 
@@ -292,6 +319,24 @@ fn essentials_groups() -> Vec<TriggerGroup> {
                     Some("Rage over"),
                     Some("glass"),
                     None,
+                ),
+                quiet_timer_regex(
+                    "eql-essentials-modrod-self",
+                    "Modulating Rod",
+                    r"^You modulate\.$",
+                    Some("Rod - {C}"),
+                    300,
+                    "Rod - {C}",
+                    Some("EQL: Modulating Rod / Modulation — 300s CD (self)"),
+                ),
+                quiet_timer_regex(
+                    "eql-essentials-modrod-others",
+                    "Modulating Rod (Others)",
+                    r"^([\w -'`]+) modulates\.$",
+                    Some("Rod - ${1}"),
+                    300,
+                    "Rod - ${1}",
+                    Some("EQL: Modulating Rod / Modulation — 300s CD (any player)"),
                 ),
             ],
         },
@@ -1282,6 +1327,39 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
     changed
 }
 
+
+/// Patch legacy Magician-only Rod Cooldown; all-player timers live in Essentials.
+pub fn ensure_modulating_rod(library: &mut TriggerLibrary) -> usize {
+    let mut changed = 0usize;
+    for group in &mut library.groups {
+        for trigger in &mut group.triggers {
+            let is_legacy_rod = trigger.id == "45cb768ec4eb-2"
+                || (trigger.name == "Rod Cooldown"
+                    && trigger.search.contains("modulate")
+                    && !trigger.id.starts_with("eql-essentials-modrod"));
+            if !is_legacy_rod {
+                continue;
+            }
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            trigger.enabled = false;
+            trigger.search = r"^You modulate\.$".into();
+            trigger.use_regex = true;
+            trigger.timer_seconds = Some(300);
+            trigger.timer_name = Some("Rod - {C}".into());
+            trigger.display_text = Some("Rod - {C}".into());
+            trigger.tts_enabled = false;
+            trigger.speak = None;
+            trigger.comments = Some(
+                "Superseded by EQL Essentials / Combat Modulating Rod (all players)".into(),
+            );
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
 
 /// Ensure Cannibalization AA cooldown exists in Shaman / Cooldowns.
 pub fn ensure_shaman_cooldowns(library: &mut TriggerLibrary) -> usize {
@@ -2366,6 +2444,78 @@ mod tests {
         assert_eq!(puma.timer_seconds, Some(85));
         assert_eq!(puma.speak.as_deref(), Some("Puma"));
         assert!(puma.tts_enabled);
+    }
+
+    #[test]
+    fn essentials_modulating_rod_tracks_self_and_others() {
+        let mut lib = starter_pack();
+        assert_eq!(ensure_essentials(&mut lib), 0);
+        let combat = lib
+            .groups
+            .iter()
+            .find(|g| g.name == "EQL Essentials / Combat")
+            .expect("combat essentials");
+        let self_rod = combat
+            .triggers
+            .iter()
+            .find(|t| t.id == "eql-essentials-modrod-self")
+            .expect("self rod");
+        let others_rod = combat
+            .triggers
+            .iter()
+            .find(|t| t.id == "eql-essentials-modrod-others")
+            .expect("others rod");
+        assert_eq!(self_rod.timer_seconds, Some(300));
+        assert_eq!(others_rod.timer_seconds, Some(300));
+        assert!(!self_rod.tts_enabled);
+        assert!(!others_rod.tts_enabled);
+
+        let mut engine = crate::engine::TriggerEngine::new(lib);
+        engine.set_character(Some("Kenkyo".into()));
+        let self_hit = engine.process_action("You modulate.");
+        assert_eq!(self_hit.len(), 1);
+        assert_eq!(
+            self_hit[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Rod - Kenkyo")
+        );
+        let other_hit = engine.process_action("Bogmal modulates.");
+        assert_eq!(other_hit.len(), 1);
+        assert_eq!(
+            other_hit[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Rod - Bogmal")
+        );
+    }
+
+    #[test]
+    fn ensure_modulating_rod_disables_legacy_mage_rod() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "class-09c2a0d18b".into(),
+                name: "Classes / Magician / General".into(),
+                enabled: true,
+                triggers: vec![Trigger {
+                    id: "45cb768ec4eb-2".into(),
+                    name: "Rod Cooldown".into(),
+                    enabled: true,
+                    search: "^You modulate.".into(),
+                    use_regex: true,
+                    display_text: Some("Rod Used".into()),
+                    timer_seconds: Some(300),
+                    timer_name: Some("Rod Cooldown".into()),
+                    early_end: vec![],
+                    sound: None,
+                    speak: None,
+                    tts_enabled: true,
+                    comments: None,
+                }],
+            }],
+        };
+        assert_eq!(ensure_modulating_rod(&mut lib), 1);
+        assert_eq!(ensure_modulating_rod(&mut lib), 0);
+        let rod = &lib.groups[0].triggers[0];
+        assert!(!rod.enabled);
+        assert_eq!(rod.search, r"^You modulate\.$");
+        assert_eq!(rod.timer_name.as_deref(), Some("Rod - {C}"));
     }
 
     #[test]
