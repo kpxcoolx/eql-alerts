@@ -1160,10 +1160,45 @@ fn ensure_early_end(trigger: &mut Trigger, pattern: &str) {
     }
 }
 
+/// Unranked (tier 0) DoT durations from eqlwiki. Engine scales these by upgrade rank.
+fn eql_dot_base_seconds(spell: &str) -> Option<u64> {
+    match spell {
+        "Turning of the Unnatural" => Some(30),
+        "Drones of Doom" => Some(48),
+        "Immolate" => Some(48),
+        "Breath of Ro" => Some(60),
+        "Winged Death" => Some(60),
+        "Drifting Death" => Some(54),
+        "Wrath of Nature" => Some(180),
+        "Asphyxiate" => Some(120),
+        "Torment of Argli" => Some(120),
+        "Wrath of the Elements" => Some(30),
+        "Vexing Mordinia" => Some(60),
+        "Cessation of Cor" => Some(60),
+        "Plague" => Some(78),
+        "Envenomed Bolt" => Some(36),
+        "Splurt" => Some(102),
+        "Boil Blood" => Some(42),
+        "Vampiric Curse" => Some(54),
+        "Torment of Shadows" => Some(96),
+        "Asystole" => Some(42),
+        "Chilling Embrace" => Some(36),
+        "Bond of Death" => Some(54),
+        "Bane of Nife" => Some(42),
+        "Curse of the Spirits" => Some(90),
+        "Pox of Bertoxxulous" => Some(108),
+        "Scourge" => Some(72),
+        "Venom of the Snake" => Some(36),
+        "Odium" => Some(30),
+        _ => None,
+    }
+}
+
 /// Shared DoT emotes fire for any caster (you, pet, mob, other players).
 /// Rewrite Damage Over Time timers to your land-hit line so clocks start only for you.
-/// Also tolerate EQL upgrade ranks (`by Plague IV.`).
-/// Odium is excluded — it lands on a shared emote and is cast-gated instead.
+/// Also tolerate EQL upgrade ranks (`by Plague IV.`) and reset durations to unranked wiki bases
+/// (the engine scales `timer_seconds` by the roman rank on land / cast).
+/// Odium land search is excluded — it uses a shared emote and is cast-gated instead.
 pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
@@ -1181,27 +1216,34 @@ pub fn ensure_eql_disease_dot_timers(library: &mut TriggerLibrary) -> usize {
             let Some(spell) = crate::engine::spell_basename(&trigger.name) else {
                 continue;
             };
-            if spell.eq_ignore_ascii_case("Odium") {
-                continue;
-            }
-            let desired = crate::engine::you_hit_by_spell_pattern(&spell);
-            if trigger.search == desired {
-                continue;
-            }
-            let is_land = trigger.search.contains("You hit") && trigger.search.contains(" by ");
-            let is_shared = !crate::engine::is_self_attributed_search(&trigger.search);
-            if !is_land && !is_shared {
-                continue;
-            }
             let before = serde_json::to_string(trigger).unwrap_or_default();
-            trigger.search = desired;
-            trigger.use_regex = true;
-            if trigger.comments.is_none() {
+
+            if let Some(base) = eql_dot_base_seconds(&spell) {
+                trigger.timer_seconds = Some(base);
+            }
+
+            if !spell.eq_ignore_ascii_case("Odium") {
+                let desired = crate::engine::you_hit_by_spell_pattern(&spell);
+                let is_land = trigger.search.contains("You hit") && trigger.search.contains(" by ");
+                let is_shared = !crate::engine::is_self_attributed_search(&trigger.search);
+                if trigger.search != desired && (is_land || is_shared) {
+                    trigger.search = desired;
+                    trigger.use_regex = true;
+                }
+            }
+
+            if spell.eq_ignore_ascii_case("Odium") {
                 trigger.comments = Some(
-                    "EQL: match your land hit — shared emotes fire for any caster; ranks OK"
+                    "EQL: dark curse emote is shared — engine fires after your Odium cast; duration scales by cast rank"
+                        .into(),
+                );
+            } else {
+                trigger.comments = Some(
+                    "EQL: unranked wiki duration; engine scales by upgrade rank on land/cast"
                         .into(),
                 );
             }
+
             let after = serde_json::to_string(trigger).unwrap_or_default();
             if before != after {
                 changed += 1;
@@ -1258,14 +1300,12 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
         if trigger.id == "eql-shaman-odium" || spell_basename_eq(&trigger.name, "Odium") {
             trigger.search = odium_land_pattern().into();
             trigger.use_regex = true;
-            if trigger.timer_seconds.unwrap_or(0) == 0 {
-                trigger.timer_seconds = Some(30);
-            }
+            trigger.timer_seconds = Some(30);
             if trigger.timer_name.is_none() {
                 trigger.timer_name = Some("Odium - ${1}".into());
             }
             trigger.comments = Some(
-                "EQL: dark curse emote is shared — engine only fires after your Odium cast"
+                "EQL: dark curse emote is shared — engine fires after your Odium cast; duration scales by cast rank"
                     .into(),
             );
         }
@@ -1287,23 +1327,23 @@ pub fn ensure_shaman_dots(library: &mut TriggerLibrary) -> usize {
             30,
             "Odium - ${1}",
             odium_land_pattern(),
-            "EQL: dark curse emote is shared — engine only fires after your Odium cast",
+            "EQL: dark curse emote is shared — engine fires after your Odium cast; duration scales by cast rank",
         ),
         (
             "eql-shaman-envenomed-bolt",
             "Envenomed Bolt",
-            48,
+            36,
             "Envenomed Bolt - ${1}",
             "",
-            "EQL: match your land hit — shared emotes fire for any caster; ranks OK",
+            "EQL: unranked wiki duration; engine scales by upgrade rank on land/cast",
         ),
         (
             "eql-shaman-plague",
             "Plague",
-            132,
+            78,
             "Plague - ${1}",
             "",
-            "EQL: match your land hit — shared emotes fire for any caster; ranks OK",
+            "EQL: unranked wiki duration; engine scales by upgrade rank on land/cast",
         ),
     ];
 
@@ -2201,8 +2241,9 @@ mod tests {
         assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 0);
         let scourge = &lib.groups[0].triggers[0];
         assert!(scourge.search.contains("by Scourge"));
-        assert!(scourge.search.contains(r"(?: [IVX]+)?"));
+        assert!(scourge.search.contains(r"(?: ([IVX]+))?"));
         assert!(!scourge.search.contains("feverish"));
+        assert_eq!(scourge.timer_seconds, Some(72));
     }
 
     #[test]
@@ -2259,7 +2300,9 @@ mod tests {
             .contains("has been poisoned"));
         assert!(lib.groups[0].triggers[0]
             .search
-            .contains(r"(?: [IVX]+)?"));
+            .contains(r"(?: ([IVX]+))?"));
+        assert_eq!(lib.groups[0].triggers[0].timer_seconds, Some(36));
+        assert_eq!(lib.groups[0].triggers[1].timer_seconds, Some(36));
     }
 
     #[test]
@@ -2291,7 +2334,8 @@ mod tests {
         assert_eq!(ensure_eql_disease_dot_timers(&mut lib), 0);
         assert!(lib.groups[0].triggers[0]
             .search
-            .contains(r"(?: [IVX]+)?"));
+            .contains(r"(?: ([IVX]+))?"));
+        assert_eq!(lib.groups[0].triggers[0].timer_seconds, Some(78));
     }
 
     #[test]
@@ -2343,7 +2387,7 @@ mod tests {
             search: crate::engine::you_hit_by_spell_pattern("Scourge"),
             use_regex: true,
             display_text: None,
-            timer_seconds: Some(126),
+            timer_seconds: Some(72),
             timer_name: Some("Scourge - ${1}".into()),
             early_end: vec![],
             sound: None,
@@ -2354,7 +2398,7 @@ mod tests {
         let mut engine = TriggerEngine::new(TriggerLibrary {
             groups: vec![TriggerGroup {
                 id: "dots".into(),
-                name: "Shaman DoTs".into(),
+                name: "Classes / Shaman / Damage Over Time".into(),
                 enabled: true,
                 triggers: vec![scourge],
             }],
@@ -2375,6 +2419,10 @@ mod tests {
             yours[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Scourge - a zol ghoul knight")
         );
+        assert_eq!(
+            yours[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(72)
+        );
 
         let ranked = engine.process_action(
             "You hit a lava guardian for 80 points of disease damage by Scourge IV.",
@@ -2383,6 +2431,11 @@ mod tests {
         assert_eq!(
             ranked[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Scourge - a lava guardian")
+        );
+        // 72s base * (1 + 0.07*4) → 12 * 1.28 = 15.36 → 15 ticks = 90s
+        assert_eq!(
+            ranked[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(90)
         );
     }
 
@@ -2469,6 +2522,11 @@ mod tests {
             Some("Odium - a lava guardian")
         );
         assert_eq!(odium[0].speak.as_deref(), Some("Odium"));
+        // 30s * (1 + 0.07*3) → 5 * 1.21 = 6.05 → 6 ticks = 36s
+        assert_eq!(
+            odium[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(36)
+        );
 
         engine.process_action("You begin casting Odium IV.");
         let raid = engine.process_action(
@@ -2478,6 +2536,11 @@ mod tests {
         assert_eq!(
             raid[0].started_timer.as_ref().map(|t| t.name.as_str()),
             Some("Odium - Innoruuk, the Prince of Hate")
+        );
+        // 30s * (1 + 0.07*4) → 5 * 1.28 = 6.4 → 6 ticks = 36s
+        assert_eq!(
+            raid[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(36)
         );
 
         let bolt = engine.process_action(
@@ -2489,6 +2552,11 @@ mod tests {
             Some("Envenomed Bolt - a lava guardian")
         );
         assert_eq!(bolt[0].speak.as_deref(), Some("Envenom"));
+        // 36s * (1 + 0.07*2) → 6 * 1.14 = 6.84 → 7 ticks = 42s
+        assert_eq!(
+            bolt[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(42)
+        );
 
         let plague = engine.process_action(
             "You hit a lava guardian for 1,234 points of disease damage by Plague IV.",
@@ -2499,6 +2567,11 @@ mod tests {
             Some("Plague - a lava guardian")
         );
         assert_eq!(plague[0].speak.as_deref(), Some("Plague"));
+        // 78s * (1 + 0.07*4) → 13 * 1.28 = 16.64 → 17 ticks = 102s
+        assert_eq!(
+            plague[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(102)
+        );
     }
 
     #[test]
@@ -2531,7 +2604,7 @@ mod tests {
                         search: crate::engine::you_hit_by_spell_pattern("Plague"),
                         use_regex: true,
                         display_text: None,
-                        timer_seconds: Some(132),
+                        timer_seconds: Some(78),
                         timer_name: Some("Plague - ${1}".into()),
                         early_end: vec![],
                         sound: None,

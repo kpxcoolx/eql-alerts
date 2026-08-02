@@ -5,6 +5,12 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.27] - 2026-08-02
+
+### Fixed
+- Feign Death Failed only alerts on your own fail (`You have fallen to the ground`), not other characters
+- DoT overlay timers use unranked eqlwiki base durations and scale by EQL upgrade rank on land/cast (no more beta max-rank clocks)
+
 ## [0.1.26] - 2026-08-01
 
 ### Fixed

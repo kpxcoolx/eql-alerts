@@ -141,8 +141,8 @@ pub struct TriggerEngine {
     next_alert_id: u64,
     /// Suppress duplicate alert spam for the same trigger (melee range spam, etc.).
     last_fire_ms: HashMap<String, u64>,
-    /// Recent "You begin casting …" names (normalized), for self-only land timers.
-    pending_casts: Vec<(String, u64)>,
+    /// Recent "You begin casting …" (normalized name, upgrade tier, time).
+    pending_casts: Vec<(String, u32, u64)>,
 }
 
 /// Ignore a second fire of the same trigger within this window.
@@ -173,7 +173,8 @@ pub fn spell_basename(name: &str) -> Option<String> {
 }
 
 /// Optional EQL upgrade rank after a spell name (`Plague IV`, `Odium II`).
-pub const SPELL_RANK_SUFFIX: &str = r"(?: [IVX]+)?";
+/// Captures the roman numeral as its own group when present.
+pub const SPELL_RANK_SUFFIX: &str = r"(?: ([IVX]+))?";
 
 /// Your land-hit line for a DoT/spell, matching any upgrade rank.
 pub fn you_hit_by_spell_pattern(spell: &str) -> String {
@@ -182,6 +183,70 @@ pub fn you_hit_by_spell_pattern(spell: &str) -> String {
     format!(
         r"^You hit (.+?) for [\d,]+ points of \w+ damage by {escaped}{SPELL_RANK_SUFFIX}\.$"
     )
+}
+
+/// Parse an EQL spell-upgrade roman suffix (`IV` → 4). Bare / unknown → `None`.
+pub fn roman_tier(roman: &str) -> Option<u32> {
+    match roman.trim().to_ascii_uppercase().as_str() {
+        "I" => Some(1),
+        "II" => Some(2),
+        "III" => Some(3),
+        "IV" => Some(4),
+        "V" => Some(5),
+        "VI" => Some(6),
+        "VII" => Some(7),
+        "VIII" => Some(8),
+        "IX" => Some(9),
+        "X" => Some(10),
+        "XI" => Some(11),
+        "XII" => Some(12),
+        "XIII" => Some(13),
+        "XIV" => Some(14),
+        "XV" => Some(15),
+        "XVI" => Some(16),
+        "XVII" => Some(17),
+        "XVIII" => Some(18),
+        _ => None,
+    }
+}
+
+/// Tier from a trailing roman on a cast/land name (`Odium III` → 3).
+pub fn trailing_roman_tier(name: &str) -> u32 {
+    let trimmed = name.trim();
+    let Some((base, roman)) = trimmed.rsplit_once(' ') else {
+        return 0;
+    };
+    if base.is_empty() {
+        return 0;
+    }
+    roman_tier(roman).unwrap_or(0)
+}
+
+/// Tier from regex captures (optional rank group is often last).
+fn tier_from_captures(caps: &[String]) -> u32 {
+    for cap in caps.iter().rev() {
+        if cap.is_empty() {
+            continue;
+        }
+        if let Some(tier) = roman_tier(cap) {
+            return tier;
+        }
+    }
+    0
+}
+
+/// EQL unranked DoT duration scaled by upgrade tier.
+///
+/// Live durations grow with mote tiers (~7% per tier, rounded to whole 6s ticks).
+/// `timer_seconds` on DoT triggers should store the **unranked** wiki base.
+pub fn scaled_duration_secs(base_secs: u64, tier: u32) -> u64 {
+    if tier == 0 || base_secs == 0 {
+        return base_secs;
+    }
+    let base_ticks = base_secs as f64 / 6.0;
+    let scaled_ticks = base_ticks * (1.0 + 0.07 * f64::from(tier));
+    let ticks = scaled_ticks.round().max(1.0) as u64;
+    ticks * 6
 }
 
 fn normalize_spell_name(name: &str) -> String {
@@ -508,15 +573,16 @@ impl TriggerEngine {
         let Some(name) = rest.strip_suffix('.') else {
             return;
         };
+        let tier = trailing_roman_tier(name);
         self.pending_casts
-            .retain(|(_, t)| now.saturating_sub(*t) < PENDING_CAST_MS);
+            .retain(|(_, _, t)| now.saturating_sub(*t) < PENDING_CAST_MS);
         self.pending_casts
-            .push((normalize_spell_name(name), now));
+            .push((normalize_spell_name(name), tier, now));
     }
 
     fn has_recent_cast(&self, spell: &str, now: u64) -> bool {
         let want = normalize_spell_name(spell);
-        self.pending_casts.iter().any(|(name, t)| {
+        self.pending_casts.iter().any(|(name, _, t)| {
             if now.saturating_sub(*t) >= PENDING_CAST_MS {
                 return false;
             }
@@ -527,6 +593,24 @@ impl TriggerEngine {
                         || name.starts_with("mesmerize")))
                 || (name.starts_with("mesmerize") && want.starts_with("mesmerize"))
         })
+    }
+
+    fn recent_cast_tier(&self, spell: &str, now: u64) -> u32 {
+        let want = normalize_spell_name(spell);
+        self.pending_casts
+            .iter()
+            .rev()
+            .find_map(|(name, tier, t)| {
+                if now.saturating_sub(*t) >= PENDING_CAST_MS {
+                    return None;
+                }
+                if name == &want {
+                    Some(*tier)
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0)
     }
 
     /// Process one log action line (already stripped of timestamp).
@@ -770,11 +854,27 @@ impl TriggerEngine {
                     if dazzle_pending && is_mesmerize_land {
                         secs = 96;
                         name_template = "Dazzle - ${1}".to_string();
-                        self.pending_casts.retain(|(n, _)| n != "dazzle");
+                        self.pending_casts.retain(|(n, _, _)| n != "dazzle");
                     } else if fascination_pending && is_mesmerize_land {
                         secs = 36;
                         name_template = "Fascination - ${1}".to_string();
                         // keep fascination pending so later AE targets also get timers
+                    } else if compiled
+                        .group_name
+                        .to_ascii_lowercase()
+                        .contains("damage over time")
+                    {
+                        // DoT timer_seconds is unranked base; scale from land rank or cast.
+                        let mut tier = caps_owned
+                            .as_deref()
+                            .map(tier_from_captures)
+                            .unwrap_or(0);
+                        if tier == 0 {
+                            if let Some(spell) = spell_basename(&compiled.trigger.name) {
+                                tier = self.recent_cast_tier(&spell, now);
+                            }
+                        }
+                        secs = scaled_duration_secs(secs, tier);
                     }
 
                     let timer_name = expand_tokens(
@@ -1234,6 +1334,18 @@ fn now_ms() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn scaled_duration_matches_wiki_bases_and_max_rank() {
+        assert_eq!(scaled_duration_secs(78, 0), 78);
+        assert_eq!(scaled_duration_secs(30, 0), 30);
+        // Plague / Asystole at tier X matched prior beta max-rank clocks.
+        assert_eq!(scaled_duration_secs(78, 10), 132);
+        assert_eq!(scaled_duration_secs(42, 10), 72);
+        assert_eq!(roman_tier("IV"), Some(4));
+        assert_eq!(trailing_roman_tier("Odium III"), 3);
+        assert_eq!(trailing_roman_tier("Plague"), 0);
+    }
 
     #[test]
     fn zoning_regex_fires_only_on_exact_load_line() {
