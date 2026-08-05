@@ -961,7 +961,7 @@
         {
           "id": "8978114ae96e-0",
           "name": "Yaulp",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel a surge of strength as you let forth a mighty yaulp\\.$",
           "use_regex": true,
           "display_text": null,
@@ -974,7 +974,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         }
       ]
     },
@@ -1445,7 +1446,7 @@
         {
           "id": "b30c330f3469-6",
           "name": "Thorncoat",
-          "enabled": true,
+          "enabled": false,
           "search": "^Thorns spring from your skin\\.$",
           "use_regex": true,
           "display_text": null,
@@ -1457,7 +1458,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         }
       ]
     },
@@ -2187,6 +2189,78 @@
           "comments": null
         },
         {
+          "id": "eql-enc-slow-landed",
+          "name": "Slowed",
+          "enabled": true,
+          "search": "^([\\w -'`]+) slows down\\.$",
+          "use_regex": true,
+          "display_text": "${1} Slowed",
+          "timer_seconds": 150,
+          "timer_name": "Slow - ${1}",
+          "early_end": [
+            "^Your (Tepid|Shiftless|Forlorn) Deeds spell has worn off\\.$",
+            "^(You have slain ${1}|${1} has been slain by (?:[^!]+))\\!$",
+            "^clear(slows?|debuffs?) is not online at this time\\.$"
+          ],
+          "sound": null,
+          "speak": "${1} Slowed",
+          "tts_enabled": true,
+          "comments": "EQL: duration from which Deeds you cast; scales by upgrade rank"
+        },
+        {
+          "id": "eql-enc-slow-resisted",
+          "name": "Slow Resisted",
+          "enabled": true,
+          "search": "^Your target resisted the (Tepid|Shiftless|Forlorn) Deeds spell\\.$",
+          "use_regex": true,
+          "display_text": "Slow resisted",
+          "timer_seconds": null,
+          "timer_name": null,
+          "early_end": [],
+          "sound": null,
+          "speak": "Slow resisted",
+          "tts_enabled": true,
+          "comments": null
+        },
+        {
+          "id": "eql-enc-incap-landed",
+          "name": "Incapacitate",
+          "enabled": true,
+          "search": "^([\\w -'`]+) looks frail\\.$",
+          "use_regex": true,
+          "display_text": "${1} Disempowered",
+          "timer_seconds": 300,
+          "timer_name": "Incapacitate - ${1}",
+          "early_end": [
+            "^Your (Disempower|Listless Power|Incapacitate) spell has worn off\\.$",
+            "^(You have slain ${1}|${1} has been slain by (?:[^!]+))\\!$",
+            "^clear(debuffs?) is not online at this time\\.$"
+          ],
+          "sound": null,
+          "speak": "${1} Disempowered",
+          "tts_enabled": true,
+          "comments": "EQL: looks frail shared \u2014 duration from Disempower/Listless/Incapacitate cast; scales by rank"
+        },
+        {
+          "id": "eql-enc-cripple-landed",
+          "name": "Cripple",
+          "enabled": true,
+          "search": "^([\\w -'`]+) has been crippled\\.$",
+          "use_regex": true,
+          "display_text": "${1} Crippled",
+          "timer_seconds": 378,
+          "timer_name": "Cripple - ${1}",
+          "early_end": [
+            "^Your Cripple spell has worn off\\.$",
+            "^(You have slain ${1}|${1} has been slain by (?:[^!]+))\\!$",
+            "^clear(debuffs?) is not online at this time\\.$"
+          ],
+          "sound": null,
+          "speak": "${1} Crippled",
+          "tts_enabled": true,
+          "comments": "EQL: unranked wiki 6.3 min; engine scales by upgrade rank on cast"
+        },
+        {
           "id": "2f1d2687f977-1",
           "name": "Slow Wore Off",
           "enabled": true,
@@ -2390,7 +2464,7 @@
         {
           "id": "8f997efad244-0",
           "name": "Elemental Armor",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel protected from fire and ice\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2403,7 +2477,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "8f997efad244-1",
@@ -2426,7 +2501,7 @@
         {
           "id": "8f997efad244-2",
           "name": "Phantom Chain",
-          "enabled": true,
+          "enabled": false,
           "search": "^You are covered in illusionary chainmail armor\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2439,12 +2514,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "8f997efad244-3",
           "name": "Phantom Plate",
-          "enabled": true,
+          "enabled": false,
           "search": "^You are covered in illusionary platemail armor\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2457,7 +2533,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         }
       ]
     },
@@ -2763,7 +2840,7 @@
           "id": "5f20897f204b-1",
           "name": "Feign Death Failed",
           "enabled": true,
-          "search": "^You have fallen to the ground\\.$",
+          "search": "^(?:{C} has|You have) fallen to the ground\\.$",
           "use_regex": true,
           "display_text": "Feign Death FAILED",
           "timer_seconds": null,
@@ -2860,7 +2937,7 @@
         {
           "id": "130bce1f5248-0",
           "name": "Allure of Death",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel your health begin to drain away\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2873,12 +2950,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "130bce1f5248-1",
           "name": "Lich",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel the skin peel from your bones\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2892,12 +2970,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "130bce1f5248-2",
           "name": "Deadeye",
-          "enabled": true,
+          "enabled": false,
           "search": "^Your vision shifts\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2910,12 +2989,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "130bce1f5248-3",
           "name": "Breath of the Dead",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel your heart stop beating\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2928,12 +3008,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "130bce1f5248-4",
           "name": "Vampiric Embrace",
-          "enabled": true,
+          "enabled": false,
           "search": "^Your hand begins to glow\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2945,7 +3026,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "130bce1f5248-5",
@@ -2968,7 +3050,7 @@
         {
           "id": "130bce1f5248-6",
           "name": "Shadow Sight",
-          "enabled": true,
+          "enabled": false,
           "search": "^The shadows fade\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2981,12 +3063,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "130bce1f5248-7",
           "name": "Banshee Aura",
-          "enabled": true,
+          "enabled": false,
           "search": "^A shrieking aura surrounds you\\.$",
           "use_regex": true,
           "display_text": null,
@@ -2999,7 +3082,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "130bce1f5248-8",
@@ -3323,7 +3407,7 @@
           "id": "a4ad18c1e70d-3",
           "name": "Feign Death Failed",
           "enabled": true,
-          "search": "^You have fallen to the ground\\.$",
+          "search": "^(?:{C} has|You have) fallen to the ground\\.$",
           "use_regex": true,
           "display_text": "Feign Death FAILED",
           "timer_seconds": null,
@@ -3553,7 +3637,7 @@
         {
           "id": "6ec2812e782e-0",
           "name": "Divine Might",
-          "enabled": true,
+          "enabled": false,
           "search": "^Your hand begins to glow with divine might\\.$",
           "use_regex": true,
           "display_text": null,
@@ -3566,12 +3650,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "6ec2812e782e-1",
           "name": "Divine Purpose",
-          "enabled": true,
+          "enabled": false,
           "search": "^A flame of divine purpose compels you\\.$",
           "use_regex": true,
           "display_text": null,
@@ -3584,12 +3669,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "6ec2812e782e-2",
           "name": "Yaulp",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel a surge of strength as you let forth a mighty yaulp\\.$",
           "use_regex": true,
           "display_text": null,
@@ -3602,7 +3688,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "6ec2812e782e-3",
@@ -3814,7 +3901,7 @@
         {
           "id": "db9d61ad1d8f-1",
           "name": "Greater Wolf Form",
-          "enabled": true,
+          "enabled": false,
           "search": "^You are now a wolf\\.$",
           "use_regex": true,
           "display_text": null,
@@ -3828,7 +3915,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "db9d61ad1d8f-2",
@@ -3870,7 +3958,7 @@
         {
           "id": "db9d61ad1d8f-4",
           "name": "Eyes of the Cat",
-          "enabled": true,
+          "enabled": false,
           "search": "^Your vision shifts\\.$",
           "use_regex": true,
           "display_text": null,
@@ -3883,12 +3971,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "db9d61ad1d8f-5",
           "name": "Call of Sky",
-          "enabled": true,
+          "enabled": false,
           "search": "^The Call of Sky fills your weapons with power\\.$",
           "use_regex": true,
           "display_text": null,
@@ -3901,7 +3990,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "db9d61ad1d8f-6",
@@ -4481,7 +4571,7 @@
         {
           "id": "9f1911445b9e-1",
           "name": "Call of Bones (Soul Defiler)",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel the skin peel from your bones\\.$",
           "use_regex": true,
           "display_text": null,
@@ -4495,7 +4585,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "9f1911445b9e-2",
@@ -4552,7 +4643,7 @@
         {
           "id": "9f1911445b9e-5",
           "name": "Breath of the Dead",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel your heart stop beating\\.$",
           "use_regex": true,
           "display_text": null,
@@ -4565,7 +4656,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "9f1911445b9e-6",
@@ -4587,7 +4679,7 @@
         {
           "id": "9f1911445b9e-7",
           "name": "Shadow Sight",
-          "enabled": true,
+          "enabled": false,
           "search": "^The shadows fade\\.$",
           "use_regex": true,
           "display_text": null,
@@ -4600,12 +4692,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "9f1911445b9e-8",
           "name": "Banshee Aura",
-          "enabled": true,
+          "enabled": false,
           "search": "^A shrieking aura surrounds you\\.$",
           "use_regex": true,
           "display_text": null,
@@ -4618,12 +4711,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "9f1911445b9e-9",
           "name": "Vampiric Embrace",
-          "enabled": true,
+          "enabled": false,
           "search": "^Your hand begins to glow\\.$",
           "use_regex": true,
           "display_text": null,
@@ -4635,12 +4729,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "9f1911445b9e-10",
           "name": "Deadeye",
-          "enabled": true,
+          "enabled": false,
           "search": "^Your vision shifts\\.$",
           "use_regex": true,
           "display_text": null,
@@ -4653,7 +4748,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         }
       ]
     },
@@ -4777,7 +4873,7 @@
           "id": "6cf32a0f7e12-1",
           "name": "Feign Death Failed",
           "enabled": true,
-          "search": "^You have fallen to the ground\\.$",
+          "search": "^(?:{C} has|You have) fallen to the ground\\.$",
           "use_regex": true,
           "display_text": "Feign Death FAILED",
           "timer_seconds": null,
@@ -4894,7 +4990,7 @@
           "search": "^You begin to snarl as your features become feline\\.$",
           "use_regex": true,
           "display_text": null,
-          "timer_seconds": 85,
+          "timer_seconds": 60,
           "timer_name": "Spirit of the Puma",
           "early_end": [
             "^The spirit of the puma departs\\.$",
@@ -4904,7 +5000,7 @@
           "sound": null,
           "speak": "Puma",
           "tts_enabled": true,
-          "comments": "EQL: ~85s self proc buff (not wiki 60s)"
+          "comments": "EQL: unranked wiki 60s; engine scales by upgrade rank on cast"
         },
         {
           "id": "f0a20f45cc96-5",
@@ -5140,7 +5236,7 @@
           "id": "f5eb35e22773-1",
           "name": "Feign Death Failed",
           "enabled": true,
-          "search": "^You have fallen to the ground\\.$",
+          "search": "^(?:{C} has|You have) fallen to the ground\\.$",
           "use_regex": true,
           "display_text": "Feign Death FAILED",
           "timer_seconds": null,
@@ -5164,12 +5260,16 @@
           "search": "^([\\w -'`]+)(?: yawns|'s motions slow as a plague of insects chews at their skin)\\.$",
           "use_regex": true,
           "display_text": "${1} Slowed",
-          "timer_seconds": null,
-          "timer_name": null,
-          "early_end": [],
+          "timer_seconds": 150,
+          "timer_name": "Slow - ${1}",
+          "early_end": [
+            "^Your (Walking Sleep|.+? Insects) spell has worn off\\.$",
+            "^(You have slain ${1}|${1} has been slain by (?:[^!]+))\\!$",
+            "^clear(slows?|debuffs?) is not online at this time\\.$"
+          ],
           "sound": null,
           "speak": "${1} Slowed",
-          "comments": "Turgur's / Insects / Walking Sleep land, or Plague of Insects"
+          "comments": "EQL: duration from which slow you cast; scales by upgrade rank"
         },
         {
           "id": "eql-shm-slow-resisted",
@@ -5247,26 +5347,64 @@
           "enabled": true,
           "search": "^([\\w -'`]+) looks frail\\.$",
           "use_regex": true,
-          "display_text": "${1} Incapacitated",
-          "timer_seconds": null,
-          "timer_name": null,
-          "early_end": [],
+          "display_text": "${1} Disempowered",
+          "timer_seconds": 300,
+          "timer_name": "Incapacitate - ${1}",
+          "early_end": [
+            "^Your (Disempower|Listless Power|Incapacitate) spell has worn off\\.$",
+            "^(You have slain ${1}|${1} has been slain by (?:[^!]+))\\!$",
+            "^clear(debuffs?) is not online at this time\\.$"
+          ],
           "sound": null,
-          "speak": "${1} Incapacitated",
-          "comments": "EQL: looks frail is shared \u2014 engine only fires after your Incapacitate cast"
+          "speak": "${1} Disempowered",
+          "comments": "EQL: looks frail shared \u2014 duration from Disempower/Listless/Incapacitate cast; scales by rank"
         },
         {
           "id": "eql-shm-incap-resisted",
           "name": "Incapacitate Resisted",
           "enabled": true,
-          "search": "^Your target resisted the Incapacitate spell\\.$",
+          "search": "^Your target resisted the (Disempower|Listless Power|Incapacitate) spell\\.$",
           "use_regex": true,
-          "display_text": "Incapacitate resisted",
+          "display_text": "Disempower resisted",
           "timer_seconds": null,
           "timer_name": null,
           "early_end": [],
           "sound": null,
-          "speak": "Incapacitate resisted",
+          "speak": "Disempower resisted",
+          "comments": null
+        },
+        {
+          "id": "eql-shm-cripple-landed",
+          "name": "Cripple",
+          "enabled": true,
+          "search": "^([\\w -'`]+) has been crippled\\.$",
+          "use_regex": true,
+          "display_text": "${1} Crippled",
+          "timer_seconds": 378,
+          "timer_name": "Cripple - ${1}",
+          "early_end": [
+            "^Your Cripple spell has worn off\\.$",
+            "^(You have slain ${1}|${1} has been slain by (?:[^!]+))\\!$",
+            "^clear(debuffs?) is not online at this time\\.$"
+          ],
+          "sound": null,
+          "speak": "${1} Crippled",
+          "tts_enabled": true,
+          "comments": "EQL: unranked wiki 6.3 min; engine scales by upgrade rank on cast"
+        },
+        {
+          "id": "eql-shm-cripple-resisted",
+          "name": "Cripple Resisted",
+          "enabled": true,
+          "search": "^Your target resisted the Cripple spell\\.$",
+          "use_regex": true,
+          "display_text": "Cripple resisted",
+          "timer_seconds": null,
+          "timer_name": null,
+          "early_end": [],
+          "sound": null,
+          "speak": "Cripple resisted",
+          "tts_enabled": true,
           "comments": null
         }
       ]
@@ -5509,7 +5647,7 @@
         {
           "id": "e93eceada385-2",
           "name": "Resistant Skin",
-          "enabled": true,
+          "enabled": false,
           "search": "^Your skin shines\\.$",
           "use_regex": true,
           "display_text": null,
@@ -5522,12 +5660,13 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "e93eceada385-3",
           "name": "Elemental Armor",
-          "enabled": true,
+          "enabled": false,
           "search": "^You feel protected from fire and ice\\.$",
           "use_regex": true,
           "display_text": null,
@@ -5540,7 +5679,8 @@
           ],
           "sound": null,
           "speak": null,
-          "comments": "EQL: permanent buff \u2014 classic timer removed"
+          "comments": "EQL: permanent buff \u2014 classic timer removed; alerts off",
+          "tts_enabled": false
         },
         {
           "id": "e93eceada385-4",

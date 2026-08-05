@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.28] - 2026-08-05
+
+### Fixed
+- Feign Death Failed matches your character name (`{C} has fallen…`) and migrates old anyone-match / You-only patterns on launch
+- Permanent Legends buffs are re-silenced on every launch (no toast/TTS), not only once
+
+### Added
+- Rank-aware slow / disempower / Puma overlay timers (unranked wiki base; engine scales by cast rank)
+- Enchanter slow / disempower / Cripple land + resist warnings
+
 ## [0.1.27] - 2026-08-02
 
 ### Fixed

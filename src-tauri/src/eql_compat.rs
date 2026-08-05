@@ -27,7 +27,13 @@ fn trigger_base_name(name: &str) -> String {
     name.split('(').next().unwrap_or(name).trim().to_ascii_lowercase()
 }
 
-/// Clear classic countdown timers for buffs that are permanent on Legends.
+pub fn is_permanent_buff_name(name: &str) -> bool {
+    let base = trigger_base_name(name);
+    permanent_names().iter().any(|p| p == &base)
+}
+
+/// Clear classic countdown timers for buffs that are permanent on Legends,
+/// and silence cast alerts (no toast / TTS) — they never expire.
 pub fn strip_permanent_buff_timers(library: &mut TriggerLibrary) -> usize {
     let permanent = permanent_names();
     if permanent.is_empty() {
@@ -35,21 +41,28 @@ pub fn strip_permanent_buff_timers(library: &mut TriggerLibrary) -> usize {
     }
 
     let mut changed = 0usize;
-    let note = "EQL: permanent buff — classic timer removed";
+    let note = "EQL: permanent buff — classic timer removed; alerts off";
 
     for group in &mut library.groups {
         for trigger in &mut group.triggers {
-            if trigger.timer_seconds.is_none() {
-                continue;
-            }
             let base = trigger_base_name(&trigger.name);
             if !permanent.iter().any(|p| p == &base) {
                 continue;
             }
+            let before = serde_json::to_string(trigger).unwrap_or_default();
             trigger.timer_seconds = None;
             trigger.timer_name = None;
+            trigger.display_text = None;
+            trigger.speak = None;
+            trigger.sound = None;
+            trigger.tts_enabled = false;
+            trigger.enabled = false;
             match &mut trigger.comments {
-                Some(existing) if existing.contains(note) => {}
+                Some(existing) if existing.contains("permanent buff") => {
+                    if !existing.contains("alerts off") {
+                        *existing = note.to_string();
+                    }
+                }
                 Some(existing) => {
                     if existing.trim().is_empty() {
                         *existing = note.to_string();
@@ -60,7 +73,10 @@ pub fn strip_permanent_buff_timers(library: &mut TriggerLibrary) -> usize {
                 }
                 None => trigger.comments = Some(note.to_string()),
             }
-            changed += 1;
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
         }
     }
     changed
@@ -90,7 +106,7 @@ mod tests {
                         timer_name: Some("Yaulp".into()),
                         early_end: vec![],
                         sound: None,
-                        speak: None,
+                        speak: Some("Yaulp".into()),
                         tts_enabled: true,
                         comments: None,
                     },
@@ -113,7 +129,12 @@ mod tests {
             }],
         };
         assert_eq!(strip_permanent_buff_timers(&mut lib), 1);
-        assert!(lib.groups[0].triggers[0].timer_seconds.is_none());
+        let yaulp = &lib.groups[0].triggers[0];
+        assert!(yaulp.timer_seconds.is_none());
+        assert!(!yaulp.enabled);
+        assert!(!yaulp.tts_enabled);
+        assert!(yaulp.speak.is_none());
         assert_eq!(lib.groups[0].triggers[1].timer_seconds, Some(24));
+        assert!(lib.groups[0].triggers[1].enabled);
     }
 }

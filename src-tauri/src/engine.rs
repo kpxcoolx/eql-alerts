@@ -235,10 +235,10 @@ fn tier_from_captures(caps: &[String]) -> u32 {
     0
 }
 
-/// EQL unranked DoT duration scaled by upgrade tier.
+/// EQL unranked duration scaled by upgrade tier.
 ///
 /// Live durations grow with mote tiers (~7% per tier, rounded to whole 6s ticks).
-/// `timer_seconds` on DoT triggers should store the **unranked** wiki base.
+/// `timer_seconds` on scalable triggers should store the **unranked** wiki base.
 pub fn scaled_duration_secs(base_secs: u64, tier: u32) -> u64 {
     if tier == 0 || base_secs == 0 {
         return base_secs;
@@ -247,6 +247,61 @@ pub fn scaled_duration_secs(base_secs: u64, tier: u32) -> u64 {
     let scaled_ticks = base_ticks * (1.0 + 0.07 * f64::from(tier));
     let ticks = scaled_ticks.round().max(1.0) as u64;
     ticks * 6
+}
+
+/// Unranked wiki base for shaman/enchanter slows (seconds).
+fn slow_base_secs(spell: &str) -> Option<u64> {
+    match spell {
+        "turgur's insects" => Some(306), // 5.1 min @L51
+        "togor's insects" | "tagar's insects" | "walking sleep" | "drowsy" => Some(150),
+        "forlorn deeds" => Some(174), // 2.9 min @L57
+        "tepid deeds" | "shiftless deeds" => Some(150),
+        _ => None,
+    }
+}
+
+/// Unranked wiki base + timer label for "looks frail" disempowering line.
+fn frail_debuff_info(spell: &str) -> Option<(u64, &'static str)> {
+    match spell {
+        "disempower" => Some((120, "Disempower - ${1}")),
+        "listless power" => Some((300, "Listless - ${1}")),
+        "incapacitate" => Some((300, "Incapacitate - ${1}")),
+        _ => None,
+    }
+}
+
+fn duration_scales_with_rank(compiled: &CompiledTrigger) -> bool {
+    let group = compiled.group_name.to_ascii_lowercase();
+    if group.contains("damage over time") {
+        return true;
+    }
+    if compiled
+        .trigger
+        .comments
+        .as_deref()
+        .map(|c| c.contains("scales by upgrade rank"))
+        .unwrap_or(false)
+    {
+        return true;
+    }
+    matches!(
+        compiled.trigger.name.as_str(),
+        "Spirit of the Puma"
+            | "Slowed"
+            | "Incapacitate"
+            | "Disempowering"
+            | "Cripple"
+            | "Forlorn Deeds"
+            | "Tepid Deeds"
+            | "Shiftless Deeds"
+            | "Turgur's Insects"
+            | "Tagar's Insects"
+            | "Togor's Insects"
+            | "Walking Sleep"
+            | "Drowsy"
+            | "Disempower"
+            | "Listless Power"
+    )
 }
 
 fn normalize_spell_name(name: &str) -> String {
@@ -274,6 +329,9 @@ fn required_recent_casts(compiled: &CompiledTrigger) -> Option<Vec<String>> {
                 "tagar's insects",
                 "togor's insects",
                 "turgur's insects",
+                "tepid deeds",
+                "shiftless deeds",
+                "forlorn deeds",
             ]
             .into_iter()
             .map(str::to_string)
@@ -286,7 +344,13 @@ fn required_recent_casts(compiled: &CompiledTrigger) -> Option<Vec<String>> {
                 .collect(),
         ),
         "Odium" => Some(vec!["odium".to_string()]),
-        "Incapacitate" => Some(vec!["incapacitate".to_string()]),
+        "Incapacitate" | "Disempowering" => Some(
+            ["disempower", "listless power", "incapacitate"]
+                .into_iter()
+                .map(str::to_string)
+                .collect(),
+        ),
+        "Cripple" => Some(vec!["cripple".to_string()]),
         _ => {
             let group = compiled.group_name.to_ascii_lowercase();
             if !group.contains("crowd control") {
@@ -613,6 +677,57 @@ impl TriggerEngine {
             .unwrap_or(0)
     }
 
+    /// Most recent pending cast that matches one of `spells` (normalized names).
+    fn recent_cast_among(&self, spells: &[&str], now: u64) -> Option<(String, u32)> {
+        let wants: Vec<String> = spells.iter().map(|s| normalize_spell_name(s)).collect();
+        self.pending_casts.iter().rev().find_map(|(name, tier, t)| {
+            if now.saturating_sub(*t) >= PENDING_CAST_MS {
+                return None;
+            }
+            if wants.iter().any(|w| w == name) {
+                Some((name.clone(), *tier))
+            } else {
+                None
+            }
+        })
+    }
+
+    /// Shared land emotes whose duration depends on which spell you just cast.
+    /// Returns (unranked base secs, upgrade tier, optional timer name template).
+    fn cast_gated_duration_override(
+        &self,
+        compiled: &CompiledTrigger,
+        now: u64,
+    ) -> Option<(u64, u32, Option<String>)> {
+        let name = compiled.trigger.name.as_str();
+        if name == "Slowed" {
+            let (spell, tier) = self.recent_cast_among(
+                &[
+                    "turgur's insects",
+                    "togor's insects",
+                    "tagar's insects",
+                    "walking sleep",
+                    "drowsy",
+                    "forlorn deeds",
+                    "tepid deeds",
+                    "shiftless deeds",
+                ],
+                now,
+            )?;
+            let base = slow_base_secs(&spell)?;
+            return Some((base, tier, Some("Slow - ${1}".into())));
+        }
+        if name == "Incapacitate" || name == "Disempowering" {
+            let (spell, tier) = self.recent_cast_among(
+                &["disempower", "listless power", "incapacitate"],
+                now,
+            )?;
+            let (base, tmpl) = frail_debuff_info(&spell)?;
+            return Some((base, tier, Some(tmpl.to_string())));
+        }
+        None
+    }
+
     /// Process one log action line (already stripped of timestamp).
     pub fn process_action(&mut self, action: &str) -> Vec<MatchAction> {
         self.prune_expired_timers();
@@ -859,12 +974,15 @@ impl TriggerEngine {
                         secs = 36;
                         name_template = "Fascination - ${1}".to_string();
                         // keep fascination pending so later AE targets also get timers
-                    } else if compiled
-                        .group_name
-                        .to_ascii_lowercase()
-                        .contains("damage over time")
+                    } else if let Some((base, tier, tmpl)) =
+                        self.cast_gated_duration_override(compiled, now)
                     {
-                        // DoT timer_seconds is unranked base; scale from land rank or cast.
+                        secs = scaled_duration_secs(base, tier);
+                        if let Some(t) = tmpl {
+                            name_template = t;
+                        }
+                    } else if duration_scales_with_rank(compiled) {
+                        // timer_seconds is unranked wiki base; scale from land rank or cast.
                         let mut tier = caps_owned
                             .as_deref()
                             .map(tier_from_captures)
@@ -1789,8 +1907,8 @@ mod tests {
                         .into(),
                     use_regex: true,
                     display_text: Some("${1} Slowed".into()),
-                    timer_seconds: None,
-                    timer_name: None,
+                    timer_seconds: Some(150),
+                    timer_name: Some("Slow - ${1}".into()),
                     early_end: vec![],
                     sound: None,
                     speak: Some("${1} Slowed".into()),
@@ -1810,6 +1928,15 @@ mod tests {
         let yours = engine.process_action("a vampire bat yawns.");
         assert_eq!(yours.len(), 1);
         assert_eq!(yours[0].alert.as_ref().map(|a| a.text.as_str()), Some("a vampire bat Slowed"));
+        // 150s * (1 + 0.07*4) → 25 * 1.28 = 32 ticks = 192s
+        assert_eq!(
+            yours[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(192)
+        );
+        assert_eq!(
+            yours[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Slow - a vampire bat")
+        );
     }
 
     #[test]
@@ -1825,12 +1952,12 @@ mod tests {
                     enabled: true,
                     search: r"^([\w -'`]+) looks frail\.$".into(),
                     use_regex: true,
-                    display_text: Some("${1} Incapacitated".into()),
-                    timer_seconds: None,
-                    timer_name: None,
+                    display_text: Some("${1} Disempowered".into()),
+                    timer_seconds: Some(300),
+                    timer_name: Some("Incapacitate - ${1}".into()),
                     early_end: vec![],
                     sound: None,
-                    speak: Some("${1} Incapacitated".into()),
+                    speak: Some("${1} Disempowered".into()),
                     tts_enabled: true,
                     comments: None,
                 }],
@@ -1847,7 +1974,24 @@ mod tests {
         assert_eq!(yours.len(), 1);
         assert_eq!(
             yours[0].speak.as_deref(),
-            Some("a vampire bat Incapacitated")
+            Some("a vampire bat Disempowered")
+        );
+        assert_eq!(
+            yours[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(300)
+        );
+
+        engine.process_action("You begin casting Disempower III.");
+        let dis = engine.process_action("a goblin looks frail.");
+        assert_eq!(dis.len(), 1);
+        // 120s * (1 + 0.07*3) → 20 * 1.21 = 24.2 → 24 ticks = 144s
+        assert_eq!(
+            dis[0].started_timer.as_ref().map(|t| t.duration_secs),
+            Some(144)
+        );
+        assert_eq!(
+            dis[0].started_timer.as_ref().map(|t| t.name.as_str()),
+            Some("Disempower - a goblin")
         );
     }
 

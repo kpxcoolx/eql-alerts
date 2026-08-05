@@ -116,13 +116,13 @@ python3 scripts/rebuild_eql_starter.py
 
 ### EQL vs classic GINA timers
 
-Many self-buffs that were short classic timers are **permanent** on Legends (Yaulp I–III, Divine Might/Purpose, Lich, Elemental Armor, Greater Wolf Form, …). The starter pack and GINA import strip those countdown timers so the overlay does not show a fake expiry. List: `samples/eql_permanent_buffs.json`. Re-apply with:
+Many self-buffs that were short classic timers are **permanent** on Legends (Yaulp I–III, Divine Might/Purpose, Lich, Elemental Armor, Greater Wolf Form, …). The starter pack and GINA import strip those countdown timers **and disable cast alerts** so they do not toast/TTS. List: `samples/eql_permanent_buffs.json`. Re-apply with:
 
 ```bash
 python3 scripts/eql_compat.py samples/eql_starter.triggers.json
 ```
 
-Existing installs auto-strip these timers once on next launch (`eql_compat_permanent_v1`). You can still use **Reset starter** for a clean pack.
+Existing installs re-silence these on launch. You can still use **Reset starter** for a clean pack.
 
 ### Self-only combat clocks (not other players)
 
@@ -133,6 +133,7 @@ EQL Alerts scopes those to **your** casts:
 | Kind | How |
 |------|-----|
 | **Damage Over Time** timers | Match `You hit <target> … by <Spell>` including EQL upgrade ranks (`Plague IV`); `timer_seconds` is the unranked wiki base and the engine scales duration by roman rank (~7%/tier) |
+| **Slow / disempower / Puma** | Unranked wiki bases; duration from which spell you cast on shared emotes; scales by upgrade rank on cast |
 | **Crowd Control** (mez, etc.) | Land emote only arms if you recently `You begin casting` that spell (Dazzle still upgrades the shared mesmerize line) |
 | **Slowed / Maloed** warnings | Same cast gate — ignores party Drowsy / other malo lands |
 

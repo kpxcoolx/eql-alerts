@@ -1,6 +1,8 @@
 use crate::engine::{Trigger, TriggerGroup, TriggerLibrary};
 use crate::eql_compat::strip_permanent_buff_timers;
-use crate::starter::{ensure_eql_disease_dot_timers, ensure_eql_mez_timers};
+use crate::starter::{
+    ensure_eql_debuff_timers, ensure_eql_disease_dot_timers, ensure_eql_mez_timers,
+};
 use regex::Regex;
 use std::fs::File;
 use std::io::Read;
@@ -13,6 +15,7 @@ pub fn import_gina_package(path: &Path) -> Result<TriggerLibrary, String> {
     strip_permanent_buff_timers(&mut library);
     let _ = ensure_eql_mez_timers(&mut library);
     let _ = ensure_eql_disease_dot_timers(&mut library);
+    let _ = ensure_eql_debuff_timers(&mut library);
     Ok(library)
 }
 

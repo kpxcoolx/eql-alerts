@@ -74,12 +74,12 @@ fn apply_audio_output(settings: &AppSettings) {
 use eql_compat::strip_permanent_buff_timers;
 use starter::{
     ensure_essentials, apply_gameplay_essentials_defaults, demote_optional_essentials,
-    ensure_default_tts, ensure_eql_ability_timers, ensure_eql_disease_dot_timers,
-    ensure_divine_invulnerability, ensure_eql_mez_timers, ensure_modulating_rod,
+    ensure_default_tts, ensure_enchanter_warnings, ensure_eql_ability_timers,
+    ensure_eql_debuff_timers, ensure_eql_disease_dot_timers, ensure_divine_invulnerability,
+    ensure_eql_mez_timers, ensure_feign_death_failed, ensure_modulating_rod,
     ensure_promised_renewal, ensure_quiet_long_others_buffs, ensure_shaman_buffs,
     ensure_shaman_cooldowns, ensure_shaman_dots, ensure_shaman_warnings,
-    is_placeholder_library,
-    starter_pack, starter_stats,
+    is_placeholder_library, starter_pack, starter_stats,
 };
 use std::fs;
 use std::path::PathBuf;
@@ -146,15 +146,13 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
         return pack;
     }
 
-    // Existing installs: strip classic timers for Legends-permanent buffs once.
+    // Permanent buffs (Yaulp I–III, …): strip classic timers and silence cast alerts.
     let mut settings = load_settings(app);
     let mut dirty = false;
-    if !settings.eql_compat_permanent_v1 {
-        if strip_permanent_buff_timers(&mut parsed) > 0 {
-            dirty = true;
-        }
-        settings.eql_compat_permanent_v1 = true;
+    if strip_permanent_buff_timers(&mut parsed) > 0 {
+        dirty = true;
     }
+    settings.eql_compat_permanent_v1 = true;
     if !settings.eql_tts_v1 {
         if ensure_default_tts(&mut parsed) > 0 {
             dirty = true;
@@ -174,6 +172,9 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
     if ensure_shaman_warnings(&mut parsed) > 0 {
         dirty = true;
     }
+    if ensure_enchanter_warnings(&mut parsed) > 0 {
+        dirty = true;
+    }
     if ensure_shaman_dots(&mut parsed) > 0 {
         dirty = true;
     }
@@ -189,6 +190,9 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
     if ensure_promised_renewal(&mut parsed) > 0 {
         dirty = true;
     }
+    if ensure_feign_death_failed(&mut parsed) > 0 {
+        dirty = true;
+    }
     if ensure_quiet_long_others_buffs(&mut parsed) > 0 {
         dirty = true;
     }
@@ -199,6 +203,9 @@ fn load_library(app: &AppHandle) -> TriggerLibrary {
         dirty = true;
     }
     if ensure_eql_disease_dot_timers(&mut parsed) > 0 {
+        dirty = true;
+    }
+    if ensure_eql_debuff_timers(&mut parsed) > 0 {
         dirty = true;
     }
     // One-shot: Combat/Danger/Fades/Social were force-armed — demote to opt-in.

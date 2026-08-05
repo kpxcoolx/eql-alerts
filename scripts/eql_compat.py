@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BUFFS = ROOT / "samples" / "eql_permanent_buffs.json"
 DEFAULT_PACK = ROOT / "samples" / "eql_starter.triggers.json"
-NOTE = "EQL: permanent buff — classic timer removed"
+NOTE = "EQL: permanent buff — classic timer removed; alerts off"
 
 
 def load_permanent_names(path: Path) -> set[str]:
@@ -29,21 +29,32 @@ def is_permanent_buff(name: str, permanent: set[str]) -> bool:
 
 
 def strip_permanent_timers(library: dict, permanent: set[str]) -> list[str]:
-    """Clear timer fields for permanent buffs. Returns human-readable change list."""
+    """Clear timers and silence alerts for permanent buffs. Returns change list."""
     changed: list[str] = []
     for group in library.get("groups", []):
         for trigger in group.get("triggers", []):
-            secs = trigger.get("timer_seconds")
-            if not secs:
-                continue
             if not is_permanent_buff(trigger.get("name", ""), permanent):
                 continue
-            label = f"{group.get('name', '?')} :: {trigger.get('name')} ({secs}s)"
+            secs = trigger.get("timer_seconds")
+            already_quiet = (
+                not secs
+                and not trigger.get("enabled", True)
+                and not trigger.get("speak")
+                and not trigger.get("tts_enabled", True)
+            )
+            if already_quiet:
+                continue
+            label = f"{group.get('name', '?')} :: {trigger.get('name')}"
+            if secs:
+                label = f"{label} ({secs}s)"
             trigger["timer_seconds"] = None
             trigger["timer_name"] = None
-            comments = (trigger.get("comments") or "").strip()
-            if NOTE not in comments:
-                trigger["comments"] = f"{comments}\n{NOTE}".strip() if comments else NOTE
+            trigger["display_text"] = None
+            trigger["speak"] = None
+            trigger["sound"] = None
+            trigger["tts_enabled"] = False
+            trigger["enabled"] = False
+            trigger["comments"] = NOTE
             changed.append(label)
     return changed
 

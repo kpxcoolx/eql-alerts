@@ -15,15 +15,18 @@ pub fn starter_pack() -> TriggerLibrary {
 
     ensure_essentials(&mut pack);
     let _ = ensure_shaman_warnings(&mut pack);
+    let _ = ensure_enchanter_warnings(&mut pack);
     let _ = ensure_shaman_dots(&mut pack);
     let _ = ensure_shaman_buffs(&mut pack);
     let _ = ensure_shaman_cooldowns(&mut pack);
     let _ = ensure_modulating_rod(&mut pack);
     let _ = ensure_promised_renewal(&mut pack);
+    let _ = ensure_feign_death_failed(&mut pack);
     let _ = ensure_quiet_long_others_buffs(&mut pack);
     let _ = ensure_eql_mez_timers(&mut pack);
     let _ = ensure_divine_invulnerability(&mut pack);
     let _ = ensure_eql_disease_dot_timers(&mut pack);
+    let _ = ensure_eql_debuff_timers(&mut pack);
     let _ = ensure_default_tts(&mut pack);
     pack
 }
@@ -807,7 +810,8 @@ pub fn ensure_eql_ability_timers(library: &mut TriggerLibrary) -> usize {
     changed
 }
 
-/// Add shaman slow/malo land + resist alerts if the Warnings group is missing them.
+/// Add shaman slow/malo/disempower land + resist alerts if the Warnings group is missing them.
+/// Also patch existing land triggers with rank-aware overlay timers.
 pub fn ensure_shaman_warnings(library: &mut TriggerLibrary) -> usize {
     let fresh = shaman_warning_triggers();
     let Some(idx) = library.groups.iter().position(|g| {
@@ -821,7 +825,25 @@ pub fn ensure_shaman_warnings(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     let existing = &mut library.groups[idx];
     for trigger in fresh {
-        if existing.triggers.iter().any(|t| t.id == trigger.id) {
+        if let Some(found) = existing.triggers.iter_mut().find(|t| t.id == trigger.id) {
+            let before = serde_json::to_string(found).unwrap_or_default();
+            if trigger.timer_seconds.is_some() {
+                found.timer_seconds = trigger.timer_seconds;
+                found.timer_name = trigger.timer_name.clone();
+                found.early_end = trigger.early_end.clone();
+                found.comments = trigger.comments.clone();
+                if trigger.display_text.is_some() {
+                    found.display_text = trigger.display_text.clone();
+                }
+                if trigger.speak.is_some() {
+                    found.speak = trigger.speak.clone();
+                }
+                found.search = trigger.search.clone();
+            }
+            let after = serde_json::to_string(found).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
             continue;
         }
         // Insert land/resist before matching wore-off so alerts read in cast order.
@@ -841,14 +863,21 @@ pub fn ensure_shaman_warnings(library: &mut TriggerLibrary) -> usize {
 
 fn shaman_warning_triggers() -> Vec<Trigger> {
     vec![
-        t_regex(
+        t_timer_regex(
             "eql-shm-slow-landed",
             "Slowed",
             r"^([\w -'`]+)(?: yawns|'s motions slow as a plague of insects chews at their skin)\.$",
             Some("${1} Slowed"),
             Some("${1} Slowed"),
             None,
-            Some("EQL: yawns is shared with others' Drowsy — engine only fires after your slow cast"),
+            150,
+            "Slow - ${1}",
+            vec![
+                r"^Your (Walking Sleep|.+? Insects) spell has worn off\.$",
+                r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$",
+                r"^clear(slows?|debuffs?) is not online at this time\.$",
+            ],
+            Some("EQL: duration from which slow you cast; scales by upgrade rank"),
         ),
         t_regex(
             "eql-shm-slow-resisted",
@@ -877,25 +906,203 @@ fn shaman_warning_triggers() -> Vec<Trigger> {
             None,
             None,
         ),
-        t_regex(
+        t_timer_regex(
             "eql-shm-incap-landed",
             "Incapacitate",
             r"^([\w -'`]+) looks frail\.$",
-            Some("${1} Incapacitated"),
-            Some("${1} Incapacitated"),
+            Some("${1} Disempowered"),
+            Some("${1} Disempowered"),
             None,
-            Some("EQL: looks frail is shared — engine only fires after your Incapacitate cast"),
+            300,
+            "Incapacitate - ${1}",
+            vec![
+                r"^Your (Disempower|Listless Power|Incapacitate) spell has worn off\.$",
+                r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$",
+                r"^clear(debuffs?) is not online at this time\.$",
+            ],
+            Some("EQL: looks frail shared — duration from Disempower/Listless/Incapacitate cast; scales by rank"),
         ),
         t_regex(
             "eql-shm-incap-resisted",
             "Incapacitate Resisted",
-            r"^Your target resisted the Incapacitate spell\.$",
-            Some("Incapacitate resisted"),
-            Some("Incapacitate resisted"),
+            r"^Your target resisted the (Disempower|Listless Power|Incapacitate) spell\.$",
+            Some("Disempower resisted"),
+            Some("Disempower resisted"),
+            None,
+            None,
+        ),
+        t_timer_regex(
+            "eql-shm-cripple-landed",
+            "Cripple",
+            r"^([\w -'`]+) has been crippled\.$",
+            Some("${1} Crippled"),
+            Some("${1} Crippled"),
+            None,
+            378,
+            "Cripple - ${1}",
+            vec![
+                r"^Your Cripple spell has worn off\.$",
+                r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$",
+                r"^clear(debuffs?) is not online at this time\.$",
+            ],
+            Some("EQL: unranked wiki 6.3 min; engine scales by upgrade rank on cast"),
+        ),
+        t_regex(
+            "eql-shm-cripple-resisted",
+            "Cripple Resisted",
+            r"^Your target resisted the Cripple spell\.$",
+            Some("Cripple resisted"),
+            Some("Cripple resisted"),
             None,
             None,
         ),
     ]
+}
+
+/// Enchanter slow + disempower land timers (shared emotes, cast-gated in engine).
+pub fn ensure_enchanter_warnings(library: &mut TriggerLibrary) -> usize {
+    let fresh = enchanter_warning_triggers();
+    let Some(idx) = library.groups.iter().position(|g| {
+        g.id == "class-a57aff638a"
+            || g.name == "Classes / Enchanter / Warnings"
+            || g.name.contains("Enchanter / Warnings")
+    }) else {
+        return 0;
+    };
+
+    let mut changed = 0usize;
+    let existing = &mut library.groups[idx];
+    for trigger in fresh {
+        if let Some(found) = existing.triggers.iter_mut().find(|t| t.id == trigger.id) {
+            let before = serde_json::to_string(found).unwrap_or_default();
+            if trigger.timer_seconds.is_some() {
+                found.timer_seconds = trigger.timer_seconds;
+                found.timer_name = trigger.timer_name.clone();
+                found.early_end = trigger.early_end.clone();
+                found.comments = trigger.comments.clone();
+                found.search = trigger.search.clone();
+                if trigger.display_text.is_some() {
+                    found.display_text = trigger.display_text.clone();
+                }
+                if trigger.speak.is_some() {
+                    found.speak = trigger.speak.clone();
+                }
+            }
+            let after = serde_json::to_string(found).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+            continue;
+        }
+        let insert_at = existing
+            .triggers
+            .iter()
+            .position(|t| t.name == "Slow Wore Off")
+            .unwrap_or(existing.triggers.len());
+        existing.triggers.insert(insert_at, trigger);
+        changed += 1;
+    }
+    changed
+}
+
+fn enchanter_warning_triggers() -> Vec<Trigger> {
+    vec![
+        t_timer_regex(
+            "eql-enc-slow-landed",
+            "Slowed",
+            r"^([\w -'`]+) slows down\.$",
+            Some("${1} Slowed"),
+            Some("${1} Slowed"),
+            None,
+            150,
+            "Slow - ${1}",
+            vec![
+                r"^Your (Tepid|Shiftless|Forlorn) Deeds spell has worn off\.$",
+                r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$",
+                r"^clear(slows?|debuffs?) is not online at this time\.$",
+            ],
+            Some("EQL: duration from which Deeds you cast; scales by upgrade rank"),
+        ),
+        t_regex(
+            "eql-enc-slow-resisted",
+            "Slow Resisted",
+            r"^Your target resisted the (Tepid|Shiftless|Forlorn) Deeds spell\.$",
+            Some("Slow resisted"),
+            Some("Slow resisted"),
+            None,
+            None,
+        ),
+        t_timer_regex(
+            "eql-enc-incap-landed",
+            "Incapacitate",
+            r"^([\w -'`]+) looks frail\.$",
+            Some("${1} Disempowered"),
+            Some("${1} Disempowered"),
+            None,
+            300,
+            "Incapacitate - ${1}",
+            vec![
+                r"^Your (Disempower|Listless Power|Incapacitate) spell has worn off\.$",
+                r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$",
+                r"^clear(debuffs?) is not online at this time\.$",
+            ],
+            Some("EQL: looks frail shared — duration from Disempower/Listless/Incapacitate cast; scales by rank"),
+        ),
+        t_timer_regex(
+            "eql-enc-cripple-landed",
+            "Cripple",
+            r"^([\w -'`]+) has been crippled\.$",
+            Some("${1} Crippled"),
+            Some("${1} Crippled"),
+            None,
+            378,
+            "Cripple - ${1}",
+            vec![
+                r"^Your Cripple spell has worn off\.$",
+                r"^(You have slain ${1}|${1} has been slain by (?:[^!]+))\!$",
+                r"^clear(debuffs?) is not online at this time\.$",
+            ],
+            Some("EQL: unranked wiki 6.3 min; engine scales by upgrade rank on cast"),
+        ),
+    ]
+}
+
+/// Reset classic GINA slow/disempower clocks to unranked eqlwiki bases (engine scales by rank).
+pub fn ensure_eql_debuff_timers(library: &mut TriggerLibrary) -> usize {
+    let mut changed = 0usize;
+    for group in &mut library.groups {
+        for trigger in &mut group.triggers {
+            let base = crate::engine::spell_basename(&trigger.name)
+                .unwrap_or_else(|| trigger.name.clone());
+            let want = match base.as_str() {
+                "Forlorn Deeds" => Some(174),
+                "Tepid Deeds" | "Shiftless Deeds" => Some(150),
+                "Turgur's Insects" => Some(306),
+                "Tagar's Insects" | "Togor's Insects" | "Walking Sleep" | "Drowsy" => Some(150),
+                "Cripple" => Some(378),
+                "Incapacitate" | "Listless Power" => Some(300),
+                "Disempower" => Some(120),
+                "Spirit of the Puma" => Some(60),
+                _ => None,
+            };
+            let Some(secs) = want else {
+                continue;
+            };
+            if trigger.timer_seconds.unwrap_or(0) == 0 {
+                continue;
+            }
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            trigger.timer_seconds = Some(secs);
+            trigger.comments = Some(
+                "EQL: unranked wiki duration; engine scales by upgrade rank on cast".into(),
+            );
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+    }
+    changed
 }
 
 /// Align Enchanter mez durations / early-ends with EverQuest Legends wiki values.
@@ -1459,6 +1666,43 @@ pub fn ensure_promised_renewal(library: &mut TriggerLibrary) -> usize {
     changed
 }
 
+/// EQ logs FD fail as `{Name} has fallen…` (and sometimes `You have fallen…`).
+fn feign_death_failed_search() -> &'static str {
+    r"^(?:{C} has|You have) fallen to the ground\.$"
+}
+
+fn feign_death_cooldown_search() -> &'static str {
+    r"^(?:(?:{C} has|You have) fallen to the ground|FD is not online at this time)\.$"
+}
+
+/// Rewrite anyone-match / You-only FD fail patterns to self-only (`{C}` / You).
+pub fn ensure_feign_death_failed(library: &mut TriggerLibrary) -> usize {
+    let desired_fail = feign_death_failed_search();
+    let desired_cd = feign_death_cooldown_search();
+    let mut changed = 0usize;
+    for group in &mut library.groups {
+        for trigger in &mut group.triggers {
+            if !trigger.search.contains("fallen to the ground") {
+                continue;
+            }
+            let before = serde_json::to_string(trigger).unwrap_or_default();
+            let wants_cd =
+                trigger.name.contains("Cooldown") || trigger.search.contains("FD is not online");
+            if wants_cd {
+                trigger.search = desired_cd.into();
+            } else {
+                trigger.search = desired_fail.into();
+            }
+            trigger.use_regex = true;
+            let after = serde_json::to_string(trigger).unwrap_or_default();
+            if before != after {
+                changed += 1;
+            }
+        }
+    }
+    changed
+}
+
 /// Patch legacy Magician rod + drop the short-lived "others modulate" essential.
 pub fn ensure_modulating_rod(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
@@ -1600,11 +1844,20 @@ pub fn ensure_shaman_buffs(library: &mut TriggerLibrary) -> usize {
     }
 
     let trigger = shaman_puma_trigger();
-    if !existing
-        .triggers
-        .iter()
-        .any(|t| t.id == trigger.id || t.name == trigger.name)
-    {
+    if let Some(existing_puma) = existing.triggers.iter_mut().find(|t| {
+        t.id == trigger.id || t.name == trigger.name
+    }) {
+        let before = serde_json::to_string(existing_puma).unwrap_or_default();
+        existing_puma.timer_seconds = Some(60);
+        existing_puma.timer_name = Some("Spirit of the Puma".into());
+        existing_puma.comments =
+            Some("EQL: unranked wiki 60s; engine scales by upgrade rank on cast".into());
+        ensure_early_end(existing_puma, r"^The spirit of the puma departs\.$");
+        let after = serde_json::to_string(existing_puma).unwrap_or_default();
+        if before != after {
+            changed += 1;
+        }
+    } else {
         let insert_at = existing
             .triggers
             .iter()
@@ -1626,14 +1879,14 @@ fn shaman_puma_trigger() -> Trigger {
         None,
         Some("Puma"),
         None,
-        85,
+        60,
         "Spirit of the Puma",
         vec![
             r"^The spirit of the puma departs\.$",
             r"^You have been slain by (?:[^!]+)\!$",
             r"^clearbuffs? is not online at this time\.$",
         ],
-        Some("EQL: ~85s self proc buff (not wiki 60s)"),
+        Some("EQL: unranked wiki 60s; engine scales by upgrade rank on cast"),
     )
 }
 
@@ -1671,6 +1924,10 @@ pub fn ensure_default_tts(library: &mut TriggerLibrary) -> usize {
     let mut changed = 0usize;
     for group in &mut library.groups {
         for trigger in &mut group.triggers {
+            // Permanent buffs stay silent — never invent a speak line for Yaulp etc.
+            if crate::eql_compat::is_permanent_buff_name(&trigger.name) {
+                continue;
+            }
             let needs_speak = trigger
                 .speak
                 .as_ref()
@@ -1884,7 +2141,7 @@ mod tests {
                 ],
             }],
         };
-        assert_eq!(ensure_shaman_warnings(&mut lib), 6);
+        assert_eq!(ensure_shaman_warnings(&mut lib), 8);
         assert_eq!(ensure_shaman_warnings(&mut lib), 0);
         let names: Vec<_> = lib.groups[0]
             .triggers
@@ -1902,8 +2159,16 @@ mod tests {
                 "Malo Wore Off",
                 "Incapacitate",
                 "Incapacitate Resisted",
+                "Cripple",
+                "Cripple Resisted",
             ]
         );
+        let slowed = lib.groups[0]
+            .triggers
+            .iter()
+            .find(|t| t.name == "Slowed")
+            .unwrap();
+        assert_eq!(slowed.timer_seconds, Some(150));
     }
 
     #[test]
@@ -2868,7 +3133,7 @@ mod tests {
         assert_eq!(names, vec!["Spirit of Cheetah", "Spirit of the Puma"]);
         let puma = &lib.groups[0].triggers[1];
         assert_eq!(puma.id, "eql-shm-spirit-of-the-puma");
-        assert_eq!(puma.timer_seconds, Some(85));
+        assert_eq!(puma.timer_seconds, Some(60));
         assert_eq!(puma.speak.as_deref(), Some("Puma"));
         assert!(puma.tts_enabled);
     }
@@ -2968,6 +3233,61 @@ mod tests {
             lib.groups[0].triggers[0].search,
             promised_renewal_search()
         );
+    }
+
+    #[test]
+    fn ensure_feign_death_failed_scopes_to_self() {
+        let mut lib = TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "monk".into(),
+                name: "Classes / Monk / General".into(),
+                enabled: true,
+                triggers: vec![
+                    t_regex(
+                        "fd-fail",
+                        "Feign Death Failed",
+                        r"^.+? has fallen to the ground\.$",
+                        Some("Feign Death FAILED"),
+                        Some("FD FAILED!"),
+                        None,
+                        None,
+                    ),
+                    t_regex(
+                        "fd-cd",
+                        "Feign Death Cooldown",
+                        r"^(You have fallen to the ground|FD is not online at this time)\.$",
+                        None,
+                        None,
+                        None,
+                        None,
+                    ),
+                ],
+            }],
+        };
+        assert_eq!(ensure_feign_death_failed(&mut lib), 2);
+        assert_eq!(ensure_feign_death_failed(&mut lib), 0);
+        assert_eq!(
+            lib.groups[0].triggers[0].search,
+            feign_death_failed_search()
+        );
+        assert_eq!(
+            lib.groups[0].triggers[1].search,
+            feign_death_cooldown_search()
+        );
+
+        let mut engine = crate::engine::TriggerEngine::new(lib.clone());
+        engine.set_character(Some("Kenkyo".into()));
+        let mine = engine.process_action("Kenkyo has fallen to the ground.");
+        assert!(mine.iter().any(|a| a.speak.as_deref() == Some("FD FAILED!")));
+        let other = engine.process_action("Bob has fallen to the ground.");
+        assert!(!other
+            .iter()
+            .any(|a| a.speak.as_deref() == Some("FD FAILED!")));
+
+        let mut engine_you = crate::engine::TriggerEngine::new(lib);
+        engine_you.set_character(Some("Kenkyo".into()));
+        let you = engine_you.process_action("You have fallen to the ground.");
+        assert!(you.iter().any(|a| a.speak.as_deref() == Some("FD FAILED!")));
     }
 
     #[test]
