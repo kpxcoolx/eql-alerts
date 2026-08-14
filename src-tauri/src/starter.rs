@@ -1207,6 +1207,12 @@ pub fn ensure_eql_mez_timers(library: &mut TriggerLibrary) -> usize {
                     trigger,
                     r"^Your (Mesmerize|Mesmerization) spell has worn off\.$",
                 );
+                if trigger.comments.is_none() {
+                    trigger.comments = Some(
+                        "EQL: Dazzle / Fascination / Mesmerization share this land line — engine names the timer from your cast"
+                            .into(),
+                    );
+                }
             } else if name == "Dazzle" {
                 if !trigger
                     .timer_name
@@ -1234,33 +1240,46 @@ pub fn ensure_eql_mez_timers(library: &mut TriggerLibrary) -> usize {
         }
     }
 
-    // Ensure silent Dazzle cast-track + worn-off clear exists in CC group.
+    // Worn-off helpers: land remap names the timer Dazzle/Mesmerization, so a matching
+    // timer_name prefix is required to clear on `Your <Spell> spell has worn off`.
     if let Some(idx) = cc_idx {
-        let has_dazzle = library.groups[idx]
-            .triggers
-            .iter()
-            .any(|t| t.id == "eql-dazzle-mez" || t.name == "Dazzle");
-        if !has_dazzle {
+        let helpers = [
+            (
+                "eql-dazzle-mez",
+                "Dazzle",
+                "EQL: 96s unranked via Mesmerize land line; scales by rank. Clears Dazzle timers on worn-off.",
+            ),
+            (
+                "eql-mesmerization-mez",
+                "Mesmerization",
+                "EQL AE: shares mesmerized land line. Clears Mesmerization timers on worn-off.",
+            ),
+        ];
+        for (id, name, comments) in helpers {
+            let has = library.groups[idx]
+                .triggers
+                .iter()
+                .any(|t| t.id == id || t.name == name);
+            if has {
+                continue;
+            }
             library.groups[idx].triggers.push(Trigger {
-                id: "eql-dazzle-mez".into(),
-                name: "Dazzle".into(),
+                id: id.into(),
+                name: name.into(),
                 enabled: true,
-                search: r"^You begin casting Dazzle\.$".into(),
+                search: format!(r"^You begin casting {name}\.$"),
                 use_regex: true,
                 display_text: Some("".into()),
                 timer_seconds: None,
-                timer_name: Some("Dazzle - ${1}".into()),
+                timer_name: Some(format!("{name} - ${{1}}")),
                 early_end: vec![
-                    r"^Your Dazzle spell has worn off of ${1}\.$".into(),
-                    r"^Your Dazzle spell has worn off\.$".into(),
+                    format!(r"^Your {name} spell has worn off of ${{1}}\.$"),
+                    format!(r"^Your {name} spell has worn off\.$"),
                 ],
                 sound: Some("none".into()),
                 speak: None,
                 tts_enabled: false,
-                comments: Some(
-                    "EQL: 96s via Mesmerize land line after this cast. Clears Dazzle timers on worn-off."
-                        .into(),
-                ),
+                comments: Some(comments.into()),
             });
             changed += 1;
         }
@@ -2082,6 +2101,16 @@ mod tests {
             .find(|t| t.id == "eql-dazzle-mez")
             .expect("dazzle");
         assert_eq!(dazzle.timer_name.as_deref(), Some("Dazzle - ${1}"));
+        let mesmerization = pack
+            .groups
+            .iter()
+            .flat_map(|g| g.triggers.iter())
+            .find(|t| t.id == "eql-mesmerization-mez")
+            .expect("mesmerization");
+        assert_eq!(
+            mesmerization.timer_name.as_deref(),
+            Some("Mesmerization - ${1}")
+        );
 
         let mend = pack
             .groups
@@ -2277,9 +2306,15 @@ mod tests {
                 }],
             }],
         };
-        assert!(ensure_eql_mez_timers(&mut lib) >= 2);
+        assert!(ensure_eql_mez_timers(&mut lib) >= 3);
         assert_eq!(lib.groups[0].triggers[0].timer_seconds, Some(30));
         assert!(lib.groups[0].triggers.iter().any(|t| t.id == "eql-dazzle-mez"));
+        assert!(
+            lib.groups[0]
+                .triggers
+                .iter()
+                .any(|t| t.id == "eql-mesmerization-mez")
+        );
     }
 
     #[test]

@@ -150,6 +150,62 @@ const ALERT_DEBOUNCE_MS: u64 = 2_000;
 /// How long a "You begin casting" counts as yours for shared land-emote timers.
 const PENDING_CAST_MS: u64 = 8_000;
 
+/// Spells that share EQL's caster-less `has been mesmerized.` land line.
+/// Identity comes from the player's own `You begin casting` (everquest-companion approach).
+struct MezSpell {
+    name: &'static str,
+    timer_prefix: &'static str,
+    base_secs: u64,
+    /// AE mez prints one land line per mob; keep the pending cast for later targets.
+    ae: bool,
+}
+
+const MEZ_FAMILY: &[MezSpell] = &[
+    MezSpell {
+        name: "dazzle",
+        timer_prefix: "Dazzle",
+        base_secs: 96,
+        ae: false,
+    },
+    MezSpell {
+        name: "fascination",
+        timer_prefix: "Fascination",
+        base_secs: 36,
+        ae: true,
+    },
+    MezSpell {
+        name: "mesmerization",
+        timer_prefix: "Mesmerization",
+        base_secs: 24,
+        ae: true,
+    },
+    MezSpell {
+        name: "mesmerize",
+        timer_prefix: "Mesmerize",
+        base_secs: 24,
+        ae: false,
+    },
+];
+
+fn mez_family_cast_names() -> Vec<String> {
+    MEZ_FAMILY.iter().map(|m| m.name.to_string()).collect()
+}
+
+fn is_mez_hold_timer(name: &str) -> bool {
+    [
+        "Mesmerize",
+        "Mesmerization",
+        "Dazzle",
+        "Fascination",
+        "Enthrall",
+        "Entrance",
+        "Kintaz",
+        "Rapture",
+    ]
+    .iter()
+    .any(|prefix| timer_matches_prefix(name, prefix))
+}
+
 /// Search already attributes the event to you (cast, your hit, character token).
 pub fn is_self_attributed_search(search: &str) -> bool {
     let s = search.trim_start_matches('^');
@@ -301,6 +357,11 @@ fn duration_scales_with_rank(compiled: &CompiledTrigger) -> bool {
             | "Drowsy"
             | "Disempower"
             | "Listless Power"
+            | "Dazzle"
+            | "Fascination"
+            | "Mesmerize"
+            | "Mesmerization"
+            | "Mesmerize/Mesmerization"
     )
 }
 
@@ -355,6 +416,9 @@ fn required_recent_casts(compiled: &CompiledTrigger) -> Option<Vec<String>> {
             let group = compiled.group_name.to_ascii_lowercase();
             if !group.contains("crowd control") {
                 return None;
+            }
+            if compiled.trigger.name.starts_with("Mesmerize") {
+                return Some(mez_family_cast_names());
             }
             spell_basename(&compiled.trigger.name).map(|name| vec![name])
         }
@@ -644,6 +708,32 @@ impl TriggerEngine {
             .push((normalize_spell_name(name), tier, now));
     }
 
+    /// Fizzle / interrupt / resist of the armed cast — nothing it might have resolved is ours.
+    fn note_cast_failed(&mut self, action: &str) {
+        if action == "Your spell fizzles!" || action == "Your spell is interrupted." {
+            self.pending_casts.clear();
+            return;
+        }
+        if let Some(rest) = action.strip_prefix("Your ") {
+            if let Some(name) = rest.strip_suffix(" spell fizzles!") {
+                let spell = normalize_spell_name(name);
+                self.pending_casts.retain(|(n, _, _)| n != &spell);
+                return;
+            }
+            if let Some(name) = rest.strip_suffix(" spell is interrupted.") {
+                let spell = normalize_spell_name(name);
+                self.pending_casts.retain(|(n, _, _)| n != &spell);
+                return;
+            }
+        }
+        if let Some(idx) = action.find(" resisted your ") {
+            let rest = &action[idx + " resisted your ".len()..];
+            let name = rest.strip_suffix('!').unwrap_or(rest);
+            let spell = normalize_spell_name(name);
+            self.pending_casts.retain(|(n, _, _)| n != &spell);
+        }
+    }
+
     fn has_recent_cast(&self, spell: &str, now: u64) -> bool {
         let want = normalize_spell_name(spell);
         self.pending_casts.iter().any(|(name, _, t)| {
@@ -651,11 +741,19 @@ impl TriggerEngine {
                 return false;
             }
             name == &want
-                || (want.starts_with("mesmerize")
-                    && (name == "dazzle"
-                        || name == "fascination"
-                        || name.starts_with("mesmerize")))
-                || (name.starts_with("mesmerize") && want.starts_with("mesmerize"))
+        })
+    }
+
+    /// Newest pending cast in the shared-mesmerize family (Dazzle / Fascination / Mesmerization / Mesmerize).
+    fn recent_mez_cast(&self, now: u64) -> Option<(&'static MezSpell, u32)> {
+        self.pending_casts.iter().rev().find_map(|(name, tier, t)| {
+            if now.saturating_sub(*t) >= PENDING_CAST_MS {
+                return None;
+            }
+            MEZ_FAMILY
+                .iter()
+                .find(|mez| mez.name == name)
+                .map(|mez| (mez, *tier))
         })
     }
 
@@ -742,14 +840,20 @@ impl TriggerEngine {
         }
 
         self.note_begin_casting(action, now);
+        self.note_cast_failed(action);
 
         // Early-end pass: clear timers when end text matches.
         let mut cleared = Vec::new();
 
-        // Mob death clears every overlay timer for that target (DoTs, mez, slows…).
+        // Mob death clears overlay timers for that target (DoTs, slows…).
+        // Mez holds stay: a mesmerized mob cannot die without waking first (wear-off prints
+        // before the corpse), so a same-name kill is a different mob.
         // EQL also capitalizes the article on other-player kill lines (`A foo` vs `a foo`).
         if let Some(mob) = parse_slain_mob(action) {
             for timer in &self.timers {
+                if is_mez_hold_timer(&timer.name) {
+                    continue;
+                }
                 if timer_targets_mob(timer, &mob) && !cleared.contains(&timer.id) {
                     cleared.push(timer.id.clone());
                 }
@@ -962,18 +1066,17 @@ impl TriggerEngine {
                         .clone()
                         .unwrap_or_else(|| compiled.trigger.name.clone());
 
-                    // Dazzle/Fascination share "has been mesmerized" with Mesmerize on EQL.
-                    let dazzle_pending = self.has_recent_cast("dazzle", now);
-                    let fascination_pending = self.has_recent_cast("fascination", now);
-                    let is_mesmerize_land = name_template.starts_with("Mesmerize");
-                    if dazzle_pending && is_mesmerize_land {
-                        secs = 96;
-                        name_template = "Dazzle - ${1}".to_string();
-                        self.pending_casts.retain(|(n, _, _)| n != "dazzle");
-                    } else if fascination_pending && is_mesmerize_land {
-                        secs = 36;
-                        name_template = "Fascination - ${1}".to_string();
-                        // keep fascination pending so later AE targets also get timers
+                    // Shared `has been mesmerized.` — name + duration from the armed cast.
+                    // Prefix must be exactly Mesmerize (not Mesmerization).
+                    let is_mesmerize_land = timer_clear_prefix(&name_template) == "Mesmerize";
+                    if is_mesmerize_land {
+                        if let Some((mez, tier)) = self.recent_mez_cast(now) {
+                            secs = scaled_duration_secs(mez.base_secs, tier);
+                            name_template = format!("{} - ${{1}}", mez.timer_prefix);
+                            if !mez.ae {
+                                self.pending_casts.retain(|(n, _, _)| n != mez.name);
+                            }
+                        }
                     } else if let Some((base, tier, tmpl)) =
                         self.cast_gated_duration_override(compiled, now)
                     {
@@ -1890,6 +1993,118 @@ mod tests {
         let mut engine = TriggerEngine::new(lib);
         engine.process_action("a goblin has been mesmerized.");
         assert!(engine.snapshot().timers.is_empty());
+    }
+
+    fn cc_mez_lib() -> TriggerLibrary {
+        TriggerLibrary {
+            groups: vec![TriggerGroup {
+                id: "cc".into(),
+                name: "Classes / Enchanter / Crowd Control".into(),
+                enabled: true,
+                triggers: vec![
+                    Trigger {
+                        id: "mez".into(),
+                        name: "Mesmerize".into(),
+                        enabled: true,
+                        search: r"^([\w -'`]+) has been mesmerized\.$".into(),
+                        use_regex: true,
+                        display_text: Some("".into()),
+                        timer_seconds: Some(24),
+                        timer_name: Some("Mesmerize - ${1}".into()),
+                        early_end: vec![],
+                        sound: Some("none".into()),
+                        speak: None,
+                        tts_enabled: false,
+                        comments: None,
+                    },
+                    Trigger {
+                        id: "mesmerization".into(),
+                        name: "Mesmerization".into(),
+                        enabled: true,
+                        search: r"^You begin casting Mesmerization\.$".into(),
+                        use_regex: true,
+                        display_text: Some("".into()),
+                        timer_seconds: None,
+                        timer_name: Some("Mesmerization - ${1}".into()),
+                        early_end: vec![r"^Your Mesmerization spell has worn off\.$".into()],
+                        sound: Some("none".into()),
+                        speak: None,
+                        tts_enabled: false,
+                        comments: None,
+                    },
+                ],
+            }],
+        }
+    }
+
+    #[test]
+    fn mesmerization_cast_names_ae_timers() {
+        let mut engine = TriggerEngine::new(cc_mez_lib());
+        engine.process_action("You begin casting Mesmerization III.");
+        engine.process_action("a goblin has been mesmerized.");
+        engine.process_action("a beetle has been mesmerized.");
+        let mut timers = engine.snapshot().timers;
+        timers.sort_by(|a, b| a.name.cmp(&b.name));
+        assert_eq!(timers.len(), 2);
+        assert_eq!(timers[0].name, "Mesmerization - a beetle");
+        assert_eq!(timers[1].name, "Mesmerization - a goblin");
+        // 24s unranked × III (4 ticks × 1.21 → 5 ticks)
+        assert_eq!(timers[0].duration_secs, scaled_duration_secs(24, 3));
+
+        engine.process_action("Your Mesmerization spell has worn off.");
+        assert_eq!(engine.snapshot().timers.len(), 1);
+    }
+
+    #[test]
+    fn mesmerize_single_target_ignores_second_land() {
+        let mut engine = TriggerEngine::new(cc_mez_lib());
+        engine.process_action("You begin casting Mesmerize.");
+        engine.process_action("a goblin has been mesmerized.");
+        engine.process_action("a beetle has been mesmerized.");
+        let timers = engine.snapshot().timers;
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].name, "Mesmerize - a goblin");
+        assert_eq!(timers[0].duration_secs, 24);
+    }
+
+    #[test]
+    fn dazzle_rank_scales_shared_mesmerize_land() {
+        let mut engine = TriggerEngine::new(cc_mez_lib());
+        engine.process_action("You begin casting Dazzle IV.");
+        engine.process_action("a goblin has been mesmerized.");
+        let timers = engine.snapshot().timers;
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].name, "Dazzle - a goblin");
+        assert_eq!(timers[0].duration_secs, scaled_duration_secs(96, 4));
+    }
+
+    #[test]
+    fn mez_fizzle_ignores_later_mesmerized_land() {
+        let mut engine = TriggerEngine::new(cc_mez_lib());
+        engine.process_action("You begin casting Dazzle.");
+        engine.process_action("Your Dazzle spell fizzles!");
+        engine.process_action("a goblin has been mesmerized.");
+        assert!(engine.snapshot().timers.is_empty());
+    }
+
+    #[test]
+    fn mez_resist_ignores_later_mesmerized_land() {
+        let mut engine = TriggerEngine::new(cc_mez_lib());
+        engine.process_action("You begin casting Mesmerize.");
+        engine.process_action("a goblin resisted your Mesmerize!");
+        engine.process_action("a beetle has been mesmerized.");
+        assert!(engine.snapshot().timers.is_empty());
+    }
+
+    #[test]
+    fn same_name_death_does_not_clear_mez_hold() {
+        let mut engine = TriggerEngine::new(cc_mez_lib());
+        engine.process_action("You begin casting Mesmerize.");
+        engine.process_action("a goblin has been mesmerized.");
+        engine.process_action("You have slain a goblin!");
+        let timers = engine.snapshot().timers;
+        assert_eq!(timers.len(), 1);
+        assert_eq!(timers[0].name, "Mesmerize - a goblin");
     }
 
     #[test]

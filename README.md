@@ -134,7 +134,7 @@ EQL Alerts scopes those to **your** casts:
 |------|-----|
 | **Damage Over Time** timers | Match `You hit <target> … by <Spell>` including EQL upgrade ranks (`Plague IV`); `timer_seconds` is the unranked wiki base and the engine scales duration by roman rank (~7%/tier) |
 | **Slow / disempower / Puma** | Unranked wiki bases; duration from which spell you cast on shared emotes; scales by upgrade rank on cast |
-| **Crowd Control** (mez, etc.) | Land emote only arms if you recently `You begin casting` that spell (Dazzle still upgrades the shared mesmerize line) |
+| **Crowd Control** (mez, etc.) | Land emote only arms if you recently `You begin casting`. Shared `has been mesmerized.` is named Dazzle / Fascination / Mesmerization / Mesmerize from that cast; duration scales by rank |
 | **Slowed / Maloed** warnings | Same cast gate — ignores party Drowsy / other malo lands |
 
 Restart the app after updates so migrations and engine cast-gating apply. Group buff trackers under `Buffs / Others` stay intentionally shared.
